@@ -46,7 +46,7 @@ The controller currently supports conversion from the following Ingress provider
 
 2.  **Install the Controller via Helm**:
     ```bash
-    helm install ingress2gateway-controller oci://registry-1.docker.io/eladmotola/ingress2gateway-controller \
+    helm install ingress2gateway-controller oci://ghcr.io/eladmotola/ingress2gateway-controller \
       --namespace ingress2gateway-system \
       --create-namespace
     ```
@@ -61,7 +61,7 @@ This configuration is **mandatory** in order to make the controller work. You mu
 
 ```yaml
 controller:
-  ingressClassMapping:
+  ingressClassToGatewayClassMapping:
     nginx-internal: nginx
     nginx-external: nginx
 ```

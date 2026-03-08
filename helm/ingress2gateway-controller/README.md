@@ -38,7 +38,7 @@ helm template ingress2gateway-controller helm/ingress2gateway-controller \
 
 ```bash
 # Replace <version> with the desired version (e.g., 0.1.0)
-helm install ingress2gateway-controller oci://registry-1.docker.io/eladmotola/ingress2gateway-controller \
+helm install ingress2gateway-controller oci://ghcr.io/eladmotola/ingress2gateway-controller \
   --version <version> \
   --namespace ingress2gateway-system \
   --create-namespace
@@ -55,7 +55,7 @@ helm install ingress2gateway-controller ./helm/ingress2gateway-controller \
 ### Install with CLI Overrides
 
 ```bash
-helm install ingress2gateway-controller oci://registry-1.docker.io/eladmotola/ingress2gateway-controller \
+helm install ingress2gateway-controller oci://ghcr.io/eladmotola/ingress2gateway-controller \
   --version <version> \
   --namespace ingress2gateway-system \
   --create-namespace \
@@ -70,7 +70,7 @@ helm install ingress2gateway-controller oci://registry-1.docker.io/eladmotola/in
 ### Upgrade with New Values
 
 ```bash
-helm upgrade ingress2gateway-controller oci://registry-1.docker.io/eladmotola/ingress2gateway-controller \
+helm upgrade ingress2gateway-controller oci://ghcr.io/eladmotola/ingress2gateway-controller \
   --version <version> \
   --namespace ingress2gateway-system \
   -f custom-values.yaml
@@ -79,7 +79,7 @@ helm upgrade ingress2gateway-controller oci://registry-1.docker.io/eladmotola/in
 ### Upgrade with Inline Values
 
 ```bash
-helm upgrade ingress2gateway-controller oci://registry-1.docker.io/eladmotola/ingress2gateway-controller \
+helm upgrade ingress2gateway-controller oci://ghcr.io/eladmotola/ingress2gateway-controller \
   --version <version> \
   --namespace ingress2gateway-system \
   --set image.tag=v1.1.0
@@ -88,7 +88,7 @@ helm upgrade ingress2gateway-controller oci://registry-1.docker.io/eladmotola/in
 ### Upgrade with Reuse Values
 
 ```bash
-helm upgrade ingress2gateway-controller oci://registry-1.docker.io/eladmotola/ingress2gateway-controller \
+helm upgrade ingress2gateway-controller oci://ghcr.io/eladmotola/ingress2gateway-controller \
   --version <version> \
   --namespace ingress2gateway-system \
   --reuse-values \
@@ -101,7 +101,7 @@ helm upgrade ingress2gateway-controller oci://registry-1.docker.io/eladmotola/in
 |-----------|-------------|---------|
 | `controller.defaultProvider` | Default Ingress provider | `ingress-nginx` |
 | `controller.defaultEmitter` | Default emitter | `standard` |
-| `controller.ingressClassMapping` | Map of IngressClass to GatewayClass | `{}` |
+| `controller.ingressClassToGatewayClassMapping` | Map of IngressClass to GatewayClass | `{}` |
 
 ### Mandatory Global Mapping
 
@@ -109,7 +109,7 @@ This configuration is **mandatory** in order to make the controller work. You mu
 
 ```yaml
 controller:
-  ingressClassMapping:
+  ingressClassToGatewayClassMapping:
     nginx-internal: nginx
     nginx-external: nginx
 ```

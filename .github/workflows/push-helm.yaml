@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   push-helm:
@@ -16,11 +17,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Login to Docker Hub for Helm
+      - name: Login to GitHub Container Registry for Helm
         run: |
-          echo "${{ secrets.DOCKER_PASSWORD }}" | \
-          helm registry login registry-1.docker.io \
-            --username "${{ secrets.DOCKER_USERNAME }}" \
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+          helm registry login ghcr.io \
+            --username "${{ github.actor }}" \
             --password-stdin
 
       - name: Install Helm
@@ -40,8 +41,8 @@ jobs:
           echo "Packaging chart ${CHART_NAME} version ${TAG_VERSION}"
           helm package ${CHART_PATH}
           
-          echo "Pushing chart to Docker Hub"
-          helm push ${CHART_NAME}-${TAG_VERSION}.tgz oci://registry-1.docker.io/${{ secrets.DOCKER_USERNAME }}
+          echo "Pushing chart to GitHub Container Registry (ghcr.io)"
+          helm push ${CHART_NAME}-${TAG_VERSION}.tgz oci://ghcr.io/${{ github.repository_owner }}
 
       - name: Upload Helm Chart to GitHub Release
         uses: softprops/action-gh-release@v2
