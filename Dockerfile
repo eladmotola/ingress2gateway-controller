@@ -17,7 +17,7 @@ COPY pkg/ pkg/
 # Build
 ARG TARGETOS
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -o controller cmd/controller/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o controller cmd/controller/main.go
 
 # Runtime stage
 FROM gcr.io/distroless/static:nonroot
