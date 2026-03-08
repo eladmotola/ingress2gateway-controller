@@ -7,6 +7,7 @@ import (
 	"github.com/eladm/ingress2gateway-controller/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,6 +17,7 @@ import (
 
 func TestConvert(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, networkingv1.AddToScheme(scheme))
 	require.NoError(t, gatewayv1.AddToScheme(scheme))
 
@@ -68,10 +70,11 @@ func TestConvert(t *testing.T) {
 				},
 			},
 			config: &config.Config{
+				GatewayName:      "nginx",
 				GatewayNamespace: "gateway-ns",
 				GatewayClass:     "my-gateway-class",
 				RouteNamespace:   "route-ns",
-				Provider:         "nginx",
+				Provider:         "ingress-nginx",
 			},
 			expectedGateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
@@ -115,7 +118,7 @@ func TestConvert(t *testing.T) {
 			config: &config.Config{
 				GatewayNamespace: "gateway-ns",
 				GatewayClass:     "my-gateway-class",
-				Provider:         "nginx",
+				Provider:         "ingress-nginx",
 			},
 			expectError: false, // The library might return empty or error depending on implementation options, let's see.
 			// If it's valid to have empty ingress (e.g. for default backend only?), then no error.

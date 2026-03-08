@@ -39,6 +39,7 @@ func TestGetConfig(t *testing.T) {
 			},
 			want: &Config{
 				Provider:         "nginx",
+				GatewayName:      "nginx-internal",
 				GatewayClass:     "nginx",
 				GatewayNamespace: "default",
 				RouteNamespace:   "default",
