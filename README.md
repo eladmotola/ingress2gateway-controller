@@ -55,6 +55,17 @@ The controller currently supports conversion from the following Ingress provider
 
 The controller is driven by annotations on your Ingress resources.
 
+### Mandatory Configuration
+
+This configuration is **mandatory** in order to make the controller work. You must provide a mapping between your Ingress classes and the target Gateway classes in your Helm values (`values.yaml`):
+
+```yaml
+controller:
+  ingressClassMapping:
+    nginx-internal: nginx
+    nginx-external: nginx
+```
+
 ### Required Annotations
 
 | Annotation | Description |

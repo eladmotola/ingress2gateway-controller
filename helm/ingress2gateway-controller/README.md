@@ -103,18 +103,18 @@ helm upgrade ingress2gateway-controller oci://registry-1.docker.io/eladmotola/in
 | `controller.defaultEmitter` | Default emitter | `standard` |
 | `controller.ingressClassMapping` | Map of IngressClass to GatewayClass | `{}` |
 
-### Automated Mode (Global Mapping)
+### Mandatory Global Mapping
 
-You can simplify Ingress conversion by providing a global mapping in your `values.yaml`:
+This configuration is **mandatory** in order to make the controller work. You must provide a global mapping in your `values.yaml`:
 
 ```yaml
 controller:
   ingressClassMapping:
     nginx-internal: nginx
-    nginx-external: nginx-prod
+    nginx-external: nginx
 ```
 
-With this mapping, any Ingress with `ingressClassName: nginx-internal` and the annotation `ingress2gateway.io/enabled: "true"` will be automatically converted using `nginx` as the target GatewayClass.
+With this mapping, any Ingress with `ingressClassName` (e.g. `nginx-internal` or `nginx-external`) and the annotation `ingress2gateway.io/enabled: "true"` will be automatically converted using `nginx` as the target GatewayClass.
 
 ## Uninstall Chart
 
