@@ -80,10 +80,7 @@ controller:
   defaultEmitter: "standard"
   # -- Map of IngressClass names to GatewayClass names.
   # This allows automatic conversion for Ingresses with these classes
-  ingressClassToGatewayClassMapping:
-    nginx-internal: nginx
-    nginx-external: nginx 
-    nginx-grpc: nginx-admin
+  ingressClassToGatewayClassMapping: {}
 
 # -- Liveness probe configuration
 livenessProbe:
