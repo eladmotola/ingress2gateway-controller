@@ -1,0 +1,22 @@
+apiVersion: v2
+name: ingress2gateway-controller
+description: A Kubernetes controller that automatically converts Ingress resources to Gateway API resources
+
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+keywords:
+  - ingress
+  - gateway-api
+  - controller
+  - migration
+
+home: https://github.com/eladm/ingress2gateway-controller
+sources:
+  - https://github.com/eladm/ingress2gateway-controller
+
+maintainers:
+  - name: eladmotola
+
+kubeVersion: ">=1.27.0-0"

@@ -1,0 +1,102 @@
+# Default values for ingress2gateway-controller.
+
+# -- Number of replicas for the controller
+replicaCount: 1
+
+image:
+  # -- Image registry
+  registry: registry-1.docker.io
+  # -- Image repository
+  repository: eladmotola/ingress2gateway-controller
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+
+# -- Override the name of the chart
+nameOverride: ""
+# -- Override the full name of the chart
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Specifies whether a service account should be created
+  create: true
+  # -- Annotations to add to the service account
+  annotations: {}
+  # -- The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# -- Annotations to add to the controller pods
+podAnnotations: {}
+# -- Security context for the pod
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+
+# -- Security context for the container
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: false
+
+service:
+  # -- Service type
+  type: ClusterIP
+  # -- Metrics port
+  port: 8080
+  # -- Annotations to add to the service
+  annotations: {}
+
+# -- Resource limits and requests for the controller
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# -- Node labels for pod assignment
+nodeSelector: {}
+
+# -- Tolerations for pod assignment
+tolerations: []
+
+# -- Affinity for pod assignment
+affinity: {}
+
+controller:
+  # -- Enable leader election for controller manager
+  leaderElection: false
+  # -- Default source provider (e.g., nginx, istio). Used if Ingress has no annotation.
+  defaultProvider: "ingress-nginx"
+  # -- Default emitter (e.g., standard). Used if Ingress has no annotation.
+  defaultEmitter: "standard"
+  # -- Map of IngressClass names to GatewayClass names.
+  # This allows automatic conversion for Ingresses with these classes
+  ingressClassToGatewayClassMapping:
+    nginx-internal: nginx
+    nginx-external: nginx 
+    nginx-grpc: nginx-admin
+
+# -- Liveness probe configuration
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+  initialDelaySeconds: 15
+  periodSeconds: 20
+
+# -- Readiness probe configuration
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8081
+  initialDelaySeconds: 5
+  periodSeconds: 10

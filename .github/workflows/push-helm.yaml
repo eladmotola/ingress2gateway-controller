@@ -1,0 +1,52 @@
+name: Push Helm Chart
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  push-helm:
+    name: Push Helm Chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: registry-1.docker.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package and Push Helm Chart
+        run: |
+          CHART_PATH="helm/ingress2gateway-controller"
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          
+          # Update the version in Chart.yaml to match the tag
+          sed -i "s/^version: .*/version: ${TAG_VERSION}/" ${CHART_PATH}/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"${TAG_VERSION}\"/" ${CHART_PATH}/Chart.yaml
+          
+          CHART_NAME=$(grep '^name:' ${CHART_PATH}/Chart.yaml | awk '{print $2}')
+          
+          echo "Packaging chart ${CHART_NAME} version ${TAG_VERSION}"
+          helm package ${CHART_PATH}
+          
+          echo "Pushing chart to Docker Hub"
+          helm push ${CHART_NAME}-${TAG_VERSION}.tgz oci://registry-1.docker.io/${{ secrets.DOCKER_USERNAME }}
+
+      - name: Upload Helm Chart to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.tgz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

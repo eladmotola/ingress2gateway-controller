@@ -1,0 +1,34 @@
+# Example: Full Conversion Mode with TLS
+#
+# This example demonstrates creating both Gateway and HTTPRoute resources.
+# The Gateway will be created with HTTPS listener and TLS termination.
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: example-grpc-conversion
+  namespace: default
+  annotations:
+    ingress2gateway.io/enabled: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+spec:
+  ingressClassName: nginx-internal
+  rules:
+  - host: secure2.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: app-service
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: api-service
+            port:
+              number: 8080

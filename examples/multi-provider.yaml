@@ -1,0 +1,53 @@
+# Example: Multi-Provider Setup
+#
+# This example shows how to use the controller with different providers
+# in the same cluster.
+
+---
+# Istio Ingress conversion
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: istio-app
+  namespace: default
+  annotations:
+    ingress2gateway.io/enabled: "true"
+    ingress2gateway.io/provider: "istio"
+spec:
+  ingressClassName: istio
+  rules:
+  - host: istio-app.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: istio-service
+            port:
+              number: 80
+
+---
+# Kong Ingress conversion
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kong-app
+  namespace: default
+  annotations:
+    ingress2gateway.io/enabled: "true"
+    ingress2gateway.io/provider: "kong"
+spec:
+  ingressClassName: kong
+  rules:
+  - host: kong-app.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kong-service
+            port:
+              number: 80
+

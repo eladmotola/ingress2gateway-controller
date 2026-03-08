@@ -1,0 +1,43 @@
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grpcbin
+  annotations:
+    ingress2gateway.io/enabled: "true"
+spec:
+  ingressClassName: nginx-grpc 
+  rules:
+  - host: grpcbin.local
+    http:
+      paths:
+      - path: /test
+        pathType: Prefix
+        backend:
+          service:
+            name: grpcbin
+            port:
+              number: 9000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grpcbin2
+  annotations:
+    ingress2gateway.io/enabled: "true"
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "10"
+spec:
+  ingressClassName: nginx-grpc
+  rules:
+  - host: grpcbin.local
+    http:
+      paths:
+      - path: /test
+        pathType: Prefix
+        backend:
+          service:
+            name: grpcbin2
+            port:
+              number: 9000

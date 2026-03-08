@@ -1,0 +1,26 @@
+# Development Dockerfile
+FROM golang:1.25-alpine as builder
+
+RUN apk add --no-cache bash curl ca-certificates
+
+WORKDIR /workspace
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source
+COPY cmd/ cmd/
+COPY pkg/ pkg/
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /controller cmd/controller/main.go
+
+FROM gcr.io/distroless/static:nonroot
+
+WORKDIR /
+
+COPY --from=builder /controller .
+
+USER 65532:65532
+
+EXPOSE 8080 8081
+ENTRYPOINT ["/controller"]

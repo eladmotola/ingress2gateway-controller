@@ -1,0 +1,44 @@
+# Example: HTTPRoute-Only Mode
+#
+# This example shows how to use the controller when you already have a Gateway
+# deployed and managed separately. The controller will only create HTTPRoutes
+# that attach to the existing Gateway.
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: example-httproute-only
+  namespace: default
+  annotations:
+    ingress2gateway.io/enabled: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: myapp.example.com
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: api-service
+            port:
+              number: 8080
+      - path: /web
+        pathType: Prefix
+        backend:
+          service:
+            name: web-service
+            port:
+              number: 80
+  - host: admin.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: admin-service
+            port:
+              number: 3000
