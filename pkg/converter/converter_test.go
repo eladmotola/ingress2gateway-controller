@@ -19,7 +19,7 @@ func TestConvert(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, networkingv1.AddToScheme(scheme))
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	c := New(fakeClient, scheme)
@@ -143,12 +143,6 @@ func TestConvert(t *testing.T) {
 				assert.Equal(t, tt.expectedGateway.Name, result.Gateway.Name)
 				assert.Equal(t, tt.expectedGateway.Namespace, result.Gateway.Namespace)
 				assert.Equal(t, tt.expectedGateway.Spec.GatewayClassName, result.Gateway.Spec.GatewayClassName)
-			} else {
-				// If we expected nil, but got something, check if config said we should create gateway?
-				// In our revised logic, we always iterate over gateways found in IR.
-				// If config.GatewayName is set, we return the gateway.
-				// Wait, the previous logic was: "ShouldCreateGateway" depends on config.
-				// Let's assume for this test we check the pointer.
 			}
 
 			if tt.validateRoutes != nil {

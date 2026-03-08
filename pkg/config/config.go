@@ -82,14 +82,14 @@ func GetConfig(ingress *networkingv1.Ingress, defaultProvider, defaultEmitter st
 
 	// Resolve GatewayName and GatewayClass from the mapping using the IngressClassName
 	if ingress.Spec.IngressClassName == nil {
-		return nil, fmt.Errorf("Ingress %s/%s must have an ingressClassName to determine the target GatewayClass",
+		return nil, fmt.Errorf("ingress %s/%s must have an ingressClassName to determine the target GatewayClass",
 			ingress.Namespace, ingress.Name)
 	}
 
 	className := *ingress.Spec.IngressClassName
 	mappedClass, ok := ingressClassToGatewayClassMapping[className]
 	if !ok {
-		return nil, fmt.Errorf("IngressClass %q for Ingress %s/%s is not in the global mapping. Please add it to the controller configuration",
+		return nil, fmt.Errorf("ingressClass %q for ingress %s/%s is not in the global mapping. Please add it to the controller configuration",
 			className, ingress.Namespace, ingress.Name)
 	}
 	cfg.GatewayName = className
