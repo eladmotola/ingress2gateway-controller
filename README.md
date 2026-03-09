@@ -29,6 +29,18 @@ The controller currently supports conversion from the following Ingress provider
 *   **apisix**
 *   **cilium**
 
+## Supported Emitters
+
+*   **standard** (default)
+*   **envoy-gateway**
+*   **gce**
+*   **kgateway**
+
+### note
+
+The following list was copied from the `ingress2gateway` library README.md
+
+
 ## Getting Started
 
 ### Prerequisites
