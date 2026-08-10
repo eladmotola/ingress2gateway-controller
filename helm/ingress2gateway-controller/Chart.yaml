@@ -12,9 +12,9 @@ keywords:
   - controller
   - migration
 
-home: https://github.com/eladm/ingress2gateway-controller
+home: https://github.com/eladmotola/ingress2gateway-controller
 sources:
-  - https://github.com/eladm/ingress2gateway-controller
+  - https://github.com/eladmotola/ingress2gateway-controller
 
 maintainers:
   - name: eladmotola
