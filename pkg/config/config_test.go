@@ -78,6 +78,34 @@ func TestGetConfig(t *testing.T) {
 			classMapping: map[string]string{"nginx": "nginx"},
 			wantErr:      true,
 		},
+		{
+			name: "valid mapping with traefik provider",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-ingress-traefik",
+					Namespace: "default",
+					Annotations: map[string]string{
+						AnnotationEnabled:  "true",
+						AnnotationProvider: "traefik",
+					},
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("traefik-class"),
+				},
+			},
+			classMapping: map[string]string{
+				"traefik-class": "traefik",
+			},
+			want: &Config{
+				Provider:         "traefik",
+				GatewayName:      "traefik-class",
+				GatewayClass:     "traefik",
+				GatewayNamespace: "default",
+				RouteNamespace:   "default",
+				Emitter:          DefaultEmitterName,
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {

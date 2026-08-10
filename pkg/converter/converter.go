@@ -8,6 +8,11 @@ import (
 	"github.com/eladm/ingress2gateway-controller/pkg/config"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitters/common_emitter"
+	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitters/agentgateway"
+	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitters/airlockmicrogateway"
+	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitters/envoygateway"
+	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitters/gce"
+	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitters/kgateway"
 	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitters/standard"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/notifications"
 	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/providers/apisix"
@@ -16,6 +21,7 @@ import (
 	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/providers/ingressnginx"
 	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/providers/istio"
 	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/providers/kong"
+	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/providers/traefik"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -124,7 +130,7 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 	}
 
 	// ------------------------------------------------------------------
-	// 7. Instantiate the Standard Emitter (produces final Gateway API objects).
+	// 7. Instantiate the configured emitter (produces final Gateway API objects).
 	// ------------------------------------------------------------------
 	emitterName := cfg.Emitter
 	if emitterName == "" {

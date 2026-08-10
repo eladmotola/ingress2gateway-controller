@@ -28,6 +28,7 @@ The controller currently supports conversion from the following Ingress provider
 *   **gce**
 *   **apisix**
 *   **cilium**
+*   **traefik**
 
 ## Supported Emitters
 
@@ -35,6 +36,8 @@ The controller currently supports conversion from the following Ingress provider
 *   **envoy-gateway**
 *   **gce**
 *   **kgateway**
+*   **agentgateway**
+*   **airlock**
 
 ### note
 
