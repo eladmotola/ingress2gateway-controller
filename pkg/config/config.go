@@ -12,10 +12,17 @@ import (
 const (
 	// Annotation keys for Ingress configuration
 	AnnotationProvider         = "ingress2gateway.io/provider"
+	AnnotationGatewayName      = "ingress2gateway.io/gateway-name"
 	AnnotationGatewayNamespace = "ingress2gateway.io/gateway-namespace"
 	AnnotationRouteNamespace   = "ingress2gateway.io/route-namespace"
 	AnnotationEmitter          = "ingress2gateway.io/emitter"
 	AnnotationEnabled          = "ingress2gateway.io/enabled"
+	AnnotationManageGateway    = "ingress2gateway.io/manage-gateway"
+
+	// Selection modes
+	SelectionModeAnnotation = "annotation"
+	SelectionModeMapped     = "mapped"
+	SelectionModeAll        = "all"
 
 	// DefaultEmitterName is the emitter used when neither annotation nor flag is set.
 	DefaultEmitterName = "standard"
@@ -29,7 +36,18 @@ const (
 	AnnotationConvertedAt    = "ingress2gateway.io/converted-at"
 )
 
-// Config holds the configuration extracted from Ingress annotations
+// ControllerOptions holds global configuration options for Ingress selection and target Gateway behavior.
+type ControllerOptions struct {
+	DefaultProvider                   string
+	DefaultEmitter                    string
+	IngressSelection                  string
+	TargetGatewayName                 string
+	TargetGatewayNamespace            string
+	TargetGatewayManage               bool
+	IngressClassToGatewayClassMapping map[string]string
+}
+
+// Config holds the configuration extracted from Ingress annotations and global options.
 type Config struct {
 	Provider         string
 	GatewayName      string
@@ -37,70 +55,135 @@ type Config struct {
 	GatewayNamespace string
 	RouteNamespace   string
 	Emitter          string
+	ManageGateway    bool
+}
+
+// GetIngressClass extracts the Ingress class from spec.ingressClassName or kubernetes.io/ingress.class annotation.
+func GetIngressClass(ingress *networkingv1.Ingress) string {
+	if ingress == nil {
+		return ""
+	}
+	if ingress.Spec.IngressClassName != nil && *ingress.Spec.IngressClassName != "" {
+		return *ingress.Spec.IngressClassName
+	}
+	if ingress.Annotations != nil {
+		if class, ok := ingress.Annotations["kubernetes.io/ingress.class"]; ok && strings.TrimSpace(class) != "" {
+			return strings.TrimSpace(class)
+		}
+	}
+	return ""
 }
 
 // IsEnabled checks if the Ingress has conversion enabled.
-// It returns true if the "ingress2gateway.io/enabled" annotation is set to "true".
-func IsEnabled(ingress *networkingv1.Ingress) bool {
-	if ingress == nil || ingress.Annotations == nil {
+// Explicit ingress2gateway.io/enabled annotations take highest precedence ("true" or "false").
+// When absent, selectionMode determines conversion: "all" converts every Ingress, "mapped" converts any Ingress with a mapped class.
+func IsEnabled(ingress *networkingv1.Ingress, selectionMode string, classMapping map[string]string) bool {
+	if ingress == nil {
 		return false
 	}
-	return strings.ToLower(ingress.Annotations[AnnotationEnabled]) == "true"
+	if ingress.Annotations != nil {
+		if value, ok := ingress.Annotations[AnnotationEnabled]; ok {
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "false":
+				return false
+			case "true":
+				return true
+			}
+		}
+	}
+	switch selectionMode {
+	case SelectionModeAll:
+		return true
+	case SelectionModeMapped:
+		className := GetIngressClass(ingress)
+		_, ok := classMapping[className]
+		return className != "" && ok
+	default:
+		return false
+	}
 }
 
-// GetConfig extracts and validates the configuration from Ingress annotations.
-// defaultProvider is used when no per-ingress provider annotation is set.
-// defaultEmitter is used when no per-ingress emitter annotation is set.
-// ingressClassToGatewayClassMapping is used to map IngressClass names to GatewayClass names.
-func GetConfig(ingress *networkingv1.Ingress, defaultProvider, defaultEmitter string, ingressClassToGatewayClassMapping map[string]string) (*Config, error) {
+// GetConfig extracts and validates the configuration from Ingress annotations and controller options.
+func GetConfig(ingress *networkingv1.Ingress, opts ControllerOptions) (*Config, error) {
 	if ingress == nil {
 		return nil, fmt.Errorf("ingress cannot be nil")
 	}
-	if ingress.Annotations == nil {
-		return nil, fmt.Errorf("no annotations found on Ingress %s/%s", ingress.Namespace, ingress.Name)
+
+	annotations := ingress.Annotations
+	if annotations == nil {
+		annotations = make(map[string]string)
 	}
 
-	provider := strings.TrimSpace(ingress.Annotations[AnnotationProvider])
+	provider := strings.TrimSpace(annotations[AnnotationProvider])
 	if provider == "" {
-		provider = defaultProvider
+		provider = opts.DefaultProvider
+	}
+	if provider == "" {
+		provider = "ingress-nginx"
 	}
 
-	emitter := strings.TrimSpace(ingress.Annotations[AnnotationEmitter])
+	emitter := strings.TrimSpace(annotations[AnnotationEmitter])
 	if emitter == "" {
-		emitter = defaultEmitter
+		emitter = opts.DefaultEmitter
 	}
 	if emitter == "" {
 		emitter = DefaultEmitterName
 	}
 
 	cfg := &Config{
-		Provider:         provider,
-		GatewayNamespace: strings.TrimSpace(ingress.Annotations[AnnotationGatewayNamespace]),
-		RouteNamespace:   strings.TrimSpace(ingress.Annotations[AnnotationRouteNamespace]),
-		Emitter:          emitter,
+		Provider:       provider,
+		Emitter:        emitter,
+		RouteNamespace: strings.TrimSpace(annotations[AnnotationRouteNamespace]),
+		ManageGateway:  true,
 	}
 
-	// Resolve GatewayName and GatewayClass from the mapping using the IngressClassName
-	if ingress.Spec.IngressClassName == nil {
-		return nil, fmt.Errorf("ingress %s/%s must have an ingressClassName to determine the target GatewayClass",
-			ingress.Namespace, ingress.Name)
-	}
-
-	className := *ingress.Spec.IngressClassName
-	mappedClass, ok := ingressClassToGatewayClassMapping[className]
-	if !ok {
-		return nil, fmt.Errorf("ingressClass %q for ingress %s/%s is not in the global mapping. Please add it to the controller configuration",
-			className, ingress.Namespace, ingress.Name)
-	}
-	cfg.GatewayName = className
-	cfg.GatewayClass = mappedClass
-
-	// Set defaults
-	if cfg.GatewayNamespace == "" {
-		cfg.GatewayNamespace = ingress.Namespace
-	}
 	if cfg.RouteNamespace == "" {
 		cfg.RouteNamespace = ingress.Namespace
+	}
+
+	gwName := strings.TrimSpace(annotations[AnnotationGatewayName])
+	if gwName != "" {
+		cfg.GatewayName = gwName
+	} else if opts.TargetGatewayName != "" {
+		cfg.GatewayName = opts.TargetGatewayName
+	}
+
+	gwNamespace := strings.TrimSpace(annotations[AnnotationGatewayNamespace])
+	if gwNamespace != "" {
+		cfg.GatewayNamespace = gwNamespace
+	} else if opts.TargetGatewayNamespace != "" {
+		cfg.GatewayNamespace = opts.TargetGatewayNamespace
+	} else {
+		cfg.GatewayNamespace = ingress.Namespace
+	}
+
+	if manageGateway, ok := annotations[AnnotationManageGateway]; ok && strings.TrimSpace(manageGateway) != "" {
+		cfg.ManageGateway = strings.EqualFold(strings.TrimSpace(manageGateway), "true")
+	} else if opts.TargetGatewayName != "" {
+		cfg.ManageGateway = opts.TargetGatewayManage
+	}
+
+	className := GetIngressClass(ingress)
+	if className != "" && opts.IngressClassToGatewayClassMapping != nil {
+		cfg.GatewayClass = opts.IngressClassToGatewayClassMapping[className]
+	}
+	if cfg.GatewayName == "" {
+		if className != "" {
+			cfg.GatewayName = className
+		} else {
+			cfg.GatewayName = "default"
+		}
+	}
+
+	if cfg.ManageGateway {
+		if cfg.GatewayClass == "" {
+			if className == "" {
+				return nil, fmt.Errorf("ingress %s/%s must have an IngressClass (via spec.ingressClassName or annotation %q) to determine target GatewayClass", ingress.Namespace, ingress.Name, "kubernetes.io/ingress.class")
+			}
+			return nil, fmt.Errorf("ingressClass %q for ingress %s/%s is not in the global mapping. Please add it to the controller configuration", className, ingress.Namespace, ingress.Name)
+		}
+	} else if cfg.GatewayClass == "" {
+		cfg.GatewayClass = cfg.GatewayName
 	}
 
 	// Validate required fields
@@ -108,10 +191,6 @@ func GetConfig(ingress *networkingv1.Ingress, defaultProvider, defaultEmitter st
 		return nil, fmt.Errorf("provider is required for Ingress %s/%s (via annotation %s or default provider)",
 			ingress.Namespace, ingress.Name, AnnotationProvider)
 	}
-	if cfg.GatewayClass == "" {
-		return nil, fmt.Errorf("gateway-class could not be determined for Ingress %s/%s", ingress.Namespace, ingress.Name)
-	}
-
 	// Validate provider is supported
 	if !IsProviderSupported(cfg.Provider) {
 		return nil, fmt.Errorf("unsupported provider %q for Ingress %s/%s. Supported providers: %v",

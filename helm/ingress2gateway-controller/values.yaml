@@ -78,6 +78,16 @@ controller:
   defaultProvider: "ingress-nginx"
   # -- Default emitter (e.g., standard). Used if Ingress has no annotation.
   defaultEmitter: "standard"
+  # -- Ingress selection mode: "annotation" (default), "mapped", or "all"
+  ingressSelection: "annotation"
+  # -- Target Gateway configuration for attaching routes to a shared or external Gateway
+  targetGateway:
+    # -- Target Gateway name
+    name: ""
+    # -- Target Gateway namespace
+    namespace: ""
+    # -- Whether the controller should manage the target Gateway resource
+    manage: true
   # -- Map of IngressClass names to GatewayClass names.
   # This allows automatic conversion for Ingresses with these classes
   ingressClassToGatewayClassMapping: {}
