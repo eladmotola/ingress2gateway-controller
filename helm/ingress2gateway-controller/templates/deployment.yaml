@@ -44,6 +44,20 @@ spec:
             {{- if .Values.controller.defaultEmitter }}
             - --emitter={{ .Values.controller.defaultEmitter }}
             {{- end }}
+            {{- if .Values.controller.ingressSelection }}
+            - --ingress-selection={{ .Values.controller.ingressSelection }}
+            {{- end }}
+            {{- if .Values.controller.targetGateway }}
+            {{- if .Values.controller.targetGateway.name }}
+            - --target-gateway-name={{ .Values.controller.targetGateway.name }}
+            {{- end }}
+            {{- if .Values.controller.targetGateway.namespace }}
+            - --target-gateway-namespace={{ .Values.controller.targetGateway.namespace }}
+            {{- end }}
+            {{- if hasKey .Values.controller.targetGateway "manage" }}
+            - --target-gateway-manage={{ .Values.controller.targetGateway.manage }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.controller.ingressClassToGatewayClassMapping }}
             {{- range $class, $gw := .Values.controller.ingressClassToGatewayClassMapping }}
             - --ingress-class-to-gateway-class-mapping={{ printf "%s=%s" $class $gw }}

@@ -33,13 +33,30 @@ type IngressReconciler struct {
 	Converter                         *converter.Converter
 	DefaultProvider                   string
 	DefaultEmitter                    string
+	IngressSelection                  string
+	TargetGatewayName                 string
+	TargetGatewayNamespace            string
+	TargetGatewayManage               bool
 	IngressClassToGatewayClassMapping map[string]string
+}
+
+func (r *IngressReconciler) getOptions() config.ControllerOptions {
+	return config.ControllerOptions{
+		DefaultProvider:                   r.DefaultProvider,
+		DefaultEmitter:                    r.DefaultEmitter,
+		IngressSelection:                  r.IngressSelection,
+		TargetGatewayName:                 r.TargetGatewayName,
+		TargetGatewayNamespace:            r.TargetGatewayNamespace,
+		TargetGatewayManage:               r.TargetGatewayManage,
+		IngressClassToGatewayClassMapping: r.IngressClassToGatewayClassMapping,
+	}
 }
 
 // Reconcile handles the reconciliation of Ingress resources
 func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	startTime := time.Now()
+	opts := r.getOptions()
 
 	// Fetch the Ingress
 	var ingress networkingv1.Ingress
@@ -57,7 +74,7 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Check if conversion is enabled
-	if !config.IsEnabled(&ingress) {
+	if !config.IsEnabled(&ingress, opts.IngressSelection, opts.IngressClassToGatewayClassMapping) {
 		// If it's disabled but still has our finalizer, it means it was previously enabled.
 		// We should clean up resources before removing the finalizer.
 		if controllerutil.ContainsFinalizer(&ingress, finalizerName) {
@@ -69,7 +86,7 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	logger.Info("IngressClassToGatewayClassMapping", "mapping", r.IngressClassToGatewayClassMapping)
 	// Get and validate configuration
-	cfg, err := config.GetConfig(&ingress, r.DefaultProvider, r.DefaultEmitter, r.IngressClassToGatewayClassMapping)
+	cfg, err := config.GetConfig(&ingress, opts)
 	if err != nil {
 		logger.Error(err, "Invalid configuration", "ingress", ingress.Name)
 		custmetrics.ConversionErrorsTotal.WithLabelValues("unknown", "invalid_config").Inc()
@@ -98,22 +115,24 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	var sharedIngresses []networkingv1.Ingress
+	ingressConfigs := make(map[string]*config.Config)
 	for _, ing := range ingressList.Items {
-		if !config.IsEnabled(&ing) {
+		if !config.IsEnabled(&ing, opts.IngressSelection, opts.IngressClassToGatewayClassMapping) {
 			continue
 		}
-		ingCfg, err := config.GetConfig(&ing, r.DefaultProvider, r.DefaultEmitter, r.IngressClassToGatewayClassMapping)
+		ingCfg, err := config.GetConfig(&ing, opts)
 		if err != nil {
 			continue
 		}
 		// If it targets the same Gateway (Name and Namespace), it must be included in the merge.
 		if ingCfg.GatewayName == cfg.GatewayName && ingCfg.GatewayNamespace == cfg.GatewayNamespace {
 			sharedIngresses = append(sharedIngresses, ing)
+			ingressConfigs[ing.Namespace+"/"+ing.Name] = ingCfg
 		}
 	}
 
-	// Perform conversion with all shared Ingresses
-	result, err := r.Converter.Convert(ctx, sharedIngresses, cfg)
+	// Perform conversion with all shared Ingresses, retaining each source Ingress's route configuration.
+	result, err := r.Converter.ConvertWithConfigs(ctx, sharedIngresses, ingressConfigs, cfg)
 	if err != nil {
 		logger.Error(err, "Conversion failed", "ingress", ingress.Name)
 		custmetrics.ConversionErrorsTotal.WithLabelValues(cfg.Provider, "conversion_failed").Inc()
@@ -122,7 +141,7 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Update Gateway if needed
-	if result.Gateway != nil {
+	if cfg.ManageGateway && result.Gateway != nil {
 		if err := r.createOrUpdateGateway(ctx, result.Gateway, &ingress); err != nil {
 			logger.Error(err, "Failed to create/update Gateway")
 			custmetrics.ConversionErrorsTotal.WithLabelValues(cfg.Provider, "gateway_creation_failed").Inc()

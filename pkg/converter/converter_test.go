@@ -72,6 +72,7 @@ func basicConfig(emitter string) *config.Config {
 		RouteNamespace:   "route-ns",
 		Provider:         "ingress-nginx",
 		Emitter:          emitter,
+		ManageGateway:    true,
 	}
 }
 
@@ -201,6 +202,7 @@ func TestConvert(t *testing.T) {
 				GatewayClass:     "my-gateway-class",
 				RouteNamespace:   "route-ns",
 				Provider:         "ingress-nginx",
+				ManageGateway:    true,
 			},
 			expectedGateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
@@ -245,6 +247,7 @@ func TestConvert(t *testing.T) {
 				GatewayNamespace: "gateway-ns",
 				GatewayClass:     "my-gateway-class",
 				Provider:         "ingress-nginx",
+				ManageGateway:    true,
 			},
 			expectError: false, // The library might return empty or error depending on implementation options, let's see.
 			// If it's valid to have empty ingress (e.g. for default backend only?), then no error.
