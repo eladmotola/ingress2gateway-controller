@@ -151,3 +151,18 @@ func GetSupportedProviders() []string {
 	}
 	return providers
 }
+
+func GetIngressClass(ingress *networkingv1.Ingress) string {
+	if ingress == nil {
+		return ""
+	}
+	if ingress.Spec.IngressClassName != nil && *ingress.Spec.IngressClassName != "" {
+		return *ingress.Spec.IngressClassName
+	}
+	if ingress.Annotations != nil {
+		if class, ok := ingress.Annotations["kubernetes.io/ingress.class"]; ok && strings.TrimSpace(class) != "" {
+			return strings.TrimSpace(class)
+		}
+	}
+	return ""
+}

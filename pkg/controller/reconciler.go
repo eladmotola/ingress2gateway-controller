@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
@@ -16,10 +17,13 @@ import (
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/record"
 
 	"github.com/eladm/ingress2gateway-controller/pkg/config"
 	"github.com/eladm/ingress2gateway-controller/pkg/converter"
 	custmetrics "github.com/eladm/ingress2gateway-controller/pkg/metrics"
+	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/notifications"
 )
 
 const (
@@ -30,6 +34,7 @@ const (
 type IngressReconciler struct {
 	client.Client
 	Scheme                            *runtime.Scheme
+	Recorder                          record.EventRecorder
 	Converter                         *converter.Converter
 	DefaultProvider                   string
 	DefaultEmitter                    string
@@ -121,6 +126,30 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
+	// Record warnings/notifications from the conversion report
+	if result.Report != nil {
+		for source, notifs := range result.Report.Notifications() {
+			for _, n := range notifs {
+				logger.Info("Conversion notification",
+					"ingress", ingress.Name,
+					"source", source,
+					"type", string(n.Type),
+					"message", n.Message)
+
+				if r.Recorder != nil {
+					eventType := corev1.EventTypeWarning
+					if n.Type == notifications.InfoNotification {
+						eventType = corev1.EventTypeNormal
+					}
+					r.Recorder.Eventf(&ingress, eventType, "ConversionNotification", "[%s] %s", source, n.Message)
+				}
+			}
+		}
+		if rendered := result.Report.Render(); strings.TrimSpace(rendered) != "" {
+			fmt.Printf("Conversion warnings for Ingress %s/%s:\n%s\n", ingress.Namespace, ingress.Name, rendered)
+		}
+	}
+
 	// Update Gateway if needed
 	if result.Gateway != nil {
 		if err := r.createOrUpdateGateway(ctx, result.Gateway, &ingress); err != nil {
@@ -149,6 +178,26 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			return ctrl.Result{}, err
 		}
 		custmetrics.ResourcesCreated.WithLabelValues("GRPCRoute", cfg.Provider).Inc()
+	}
+
+	// Create or update TLSRoutes
+	for _, tlsRoute := range result.TLSRoutes {
+		if err := r.createOrUpdateTLSRoute(ctx, tlsRoute, &ingress); err != nil {
+			logger.Error(err, "Failed to create/update TLSRoute", "tlsRoute", tlsRoute.Name)
+			custmetrics.ConversionErrorsTotal.WithLabelValues(cfg.Provider, "tlsroute_creation_failed").Inc()
+			return ctrl.Result{}, err
+		}
+		custmetrics.ResourcesCreated.WithLabelValues("TLSRoute", cfg.Provider).Inc()
+	}
+
+	// Create or update BackendTLSPolicies
+	for _, policy := range result.BackendTLSPolicies {
+		if err := r.createOrUpdateBackendTLSPolicy(ctx, policy, &ingress); err != nil {
+			logger.Error(err, "Failed to create/update BackendTLSPolicy", "backendTLSPolicy", policy.Name)
+			custmetrics.ConversionErrorsTotal.WithLabelValues(cfg.Provider, "backendtlspolicy_creation_failed").Inc()
+			return ctrl.Result{}, err
+		}
+		custmetrics.ResourcesCreated.WithLabelValues("BackendTLSPolicy", cfg.Provider).Inc()
 	}
 
 	// Record success metrics
@@ -250,6 +299,32 @@ func (r *IngressReconciler) deleteOrphanRoutes(ctx context.Context, namespace, s
 				logger.Info("Deleting orphan GRPCRoute", "name", route.Name)
 				if err := r.Delete(ctx, &route); err != nil {
 					return fmt.Errorf("failed to delete GRPCRoute %s: %w", route.Name, err)
+				}
+			}
+		}
+	}
+
+	// TLSRoutes
+	tlsRoutes := &gatewayv1.TLSRouteList{}
+	if err := r.List(ctx, tlsRoutes, client.InNamespace(namespace)); err == nil {
+		for _, route := range tlsRoutes.Items {
+			if route.Annotations != nil && route.Annotations[config.AnnotationSourceIngress] == sourceVal {
+				logger.Info("Deleting orphan TLSRoute", "name", route.Name)
+				if err := r.Delete(ctx, &route); err != nil {
+					return fmt.Errorf("failed to delete TLSRoute %s: %w", route.Name, err)
+				}
+			}
+		}
+	}
+
+	// BackendTLSPolicies
+	policies := &gatewayv1.BackendTLSPolicyList{}
+	if err := r.List(ctx, policies, client.InNamespace(namespace)); err == nil {
+		for _, policy := range policies.Items {
+			if policy.Annotations != nil && policy.Annotations[config.AnnotationSourceIngress] == sourceVal {
+				logger.Info("Deleting orphan BackendTLSPolicy", "name", policy.Name)
+				if err := r.Delete(ctx, &policy); err != nil {
+					return fmt.Errorf("failed to delete BackendTLSPolicy %s: %w", policy.Name, err)
 				}
 			}
 		}
@@ -405,6 +480,80 @@ func (r *IngressReconciler) createOrUpdateGRPCRoute(ctx context.Context, grpcRou
 	return r.Update(ctx, grpcRoute)
 }
 
+// createOrUpdateTLSRoute creates or updates a TLSRoute resource
+func (r *IngressReconciler) createOrUpdateTLSRoute(ctx context.Context, tlsRoute *gatewayv1.TLSRoute, owner *networkingv1.Ingress) error {
+	logger := log.FromContext(ctx)
+
+	// Set owner reference
+	if err := controllerutil.SetOwnerReference(owner, tlsRoute, r.Scheme); err != nil {
+		logger.V(1).Info("Failed to set owner reference", "error", err)
+	}
+
+	// Try to get existing TLSRoute
+	existing := &gatewayv1.TLSRoute{}
+	err := r.Get(ctx, client.ObjectKey{Name: tlsRoute.Name, Namespace: tlsRoute.Namespace}, existing)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Create new TLSRoute
+			logger.Info("Creating TLSRoute", "tlsRoute", tlsRoute.Name, "namespace", tlsRoute.Namespace)
+			return r.Create(ctx, tlsRoute)
+		}
+		return err
+	}
+
+	// Prepare for update
+	tlsRoute.ResourceVersion = existing.ResourceVersion
+	tlsRoute.OwnerReferences = existing.OwnerReferences
+	if err := controllerutil.SetOwnerReference(owner, tlsRoute, r.Scheme); err != nil {
+		logger.V(1).Info("Failed to set owner reference", "error", err)
+	}
+
+	// Update existing TLSRoute
+	if r.isResourceEqual(existing.ObjectMeta, tlsRoute.ObjectMeta, existing.Spec, tlsRoute.Spec) {
+		return nil
+	}
+
+	logger.Info("Updating TLSRoute", "tlsRoute", tlsRoute.Name, "namespace", tlsRoute.Namespace)
+	return r.Update(ctx, tlsRoute)
+}
+
+// createOrUpdateBackendTLSPolicy creates or updates a BackendTLSPolicy resource
+func (r *IngressReconciler) createOrUpdateBackendTLSPolicy(ctx context.Context, policy *gatewayv1.BackendTLSPolicy, owner *networkingv1.Ingress) error {
+	logger := log.FromContext(ctx)
+
+	// Set owner reference
+	if err := controllerutil.SetOwnerReference(owner, policy, r.Scheme); err != nil {
+		logger.V(1).Info("Failed to set owner reference", "error", err)
+	}
+
+	// Try to get existing BackendTLSPolicy
+	existing := &gatewayv1.BackendTLSPolicy{}
+	err := r.Get(ctx, client.ObjectKey{Name: policy.Name, Namespace: policy.Namespace}, existing)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Create new BackendTLSPolicy
+			logger.Info("Creating BackendTLSPolicy", "backendTLSPolicy", policy.Name, "namespace", policy.Namespace)
+			return r.Create(ctx, policy)
+		}
+		return err
+	}
+
+	// Prepare for update
+	policy.ResourceVersion = existing.ResourceVersion
+	policy.OwnerReferences = existing.OwnerReferences
+	if err := controllerutil.SetOwnerReference(owner, policy, r.Scheme); err != nil {
+		logger.V(1).Info("Failed to set owner reference", "error", err)
+	}
+
+	// Update existing BackendTLSPolicy
+	if r.isResourceEqual(existing.ObjectMeta, policy.ObjectMeta, existing.Spec, policy.Spec) {
+		return nil
+	}
+
+	logger.Info("Updating BackendTLSPolicy", "backendTLSPolicy", policy.Name, "namespace", policy.Namespace)
+	return r.Update(ctx, policy)
+}
+
 // isResourceEqual compares two resources ignoring the dynamic timestamp annotation
 func (r *IngressReconciler) isResourceEqual(oldMeta, newMeta metav1.ObjectMeta, oldSpec, newSpec interface{}) bool {
 	if !apiequality.Semantic.DeepEqual(oldSpec, newSpec) {
@@ -447,5 +596,7 @@ func (r *IngressReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&gatewayv1.Gateway{}).
 		Owns(&gatewayv1.HTTPRoute{}).
 		Owns(&gatewayv1.GRPCRoute{}).
+		Owns(&gatewayv1.TLSRoute{}).
+		Owns(&gatewayv1.BackendTLSPolicy{}).
 		Complete(r)
 }
