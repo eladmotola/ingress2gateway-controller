@@ -64,7 +64,7 @@ func TestReconcileTLSRoute(t *testing.T) {
 			Name:      "tls-passthrough",
 			Namespace: "default",
 			Annotations: map[string]string{
-				config.AnnotationEnabled:                     "true",
+				config.AnnotationEnabled:                      "true",
 				"nginx.ingress.kubernetes.io/ssl-passthrough": "true",
 			},
 		},
@@ -108,7 +108,7 @@ func TestReconcileTLSRoute(t *testing.T) {
 	// 1. Reconcile Ingress
 	res, err := reconciler.Reconcile(ctx, req)
 	require.NoError(t, err)
-	assert.False(t, res.Requeue)
+	assert.Zero(t, res.RequeueAfter)
 
 	// 2. Verify Gateway was created
 	gw := &gatewayv1.Gateway{}
@@ -231,7 +231,7 @@ func TestReconcileBackendTLSPolicy(t *testing.T) {
 	// 1. Reconcile Ingress
 	res, err := reconciler.Reconcile(ctx, req)
 	require.NoError(t, err)
-	assert.False(t, res.Requeue)
+	assert.Zero(t, res.RequeueAfter)
 
 	// 2. Verify Gateway was created
 	gw := &gatewayv1.Gateway{}
