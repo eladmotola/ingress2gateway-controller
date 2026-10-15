@@ -42,7 +42,6 @@ func TestGetConfig(t *testing.T) {
 				GatewayName:      "nginx-internal",
 				GatewayClass:     "nginx",
 				GatewayNamespace: "default",
-				RouteNamespace:   "default",
 				Emitter:          DefaultEmitterName,
 			},
 			wantErr: false,
@@ -56,6 +55,23 @@ func TestGetConfig(t *testing.T) {
 					Annotations: map[string]string{
 						AnnotationEnabled: "true",
 					},
+				},
+			},
+			classMapping: map[string]string{"nginx": "nginx"},
+			wantErr:      true,
+		},
+		{
+			name: "empty IngressClassName",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-ingress",
+					Namespace: "default",
+					Annotations: map[string]string{
+						AnnotationEnabled: "true",
+					},
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To(""),
 				},
 			},
 			classMapping: map[string]string{"nginx": "nginx"},
@@ -101,7 +117,6 @@ func TestGetConfig(t *testing.T) {
 				GatewayName:      "traefik-class",
 				GatewayClass:     "traefik",
 				GatewayNamespace: "default",
-				RouteNamespace:   "default",
 				Emitter:          DefaultEmitterName,
 			},
 			wantErr: false,

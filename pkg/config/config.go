@@ -13,7 +13,6 @@ const (
 	// Annotation keys for Ingress configuration
 	AnnotationProvider         = "ingress2gateway.io/provider"
 	AnnotationGatewayNamespace = "ingress2gateway.io/gateway-namespace"
-	AnnotationRouteNamespace   = "ingress2gateway.io/route-namespace"
 	AnnotationEmitter          = "ingress2gateway.io/emitter"
 	AnnotationEnabled          = "ingress2gateway.io/enabled"
 
@@ -35,7 +34,6 @@ type Config struct {
 	GatewayName      string
 	GatewayClass     string
 	GatewayNamespace string
-	RouteNamespace   string
 	Emitter          string
 }
 
@@ -76,12 +74,11 @@ func GetConfig(ingress *networkingv1.Ingress, defaultProvider, defaultEmitter st
 	cfg := &Config{
 		Provider:         provider,
 		GatewayNamespace: strings.TrimSpace(ingress.Annotations[AnnotationGatewayNamespace]),
-		RouteNamespace:   strings.TrimSpace(ingress.Annotations[AnnotationRouteNamespace]),
 		Emitter:          emitter,
 	}
 
 	// Resolve GatewayName and GatewayClass from the mapping using the IngressClassName
-	if ingress.Spec.IngressClassName == nil {
+	if ingress.Spec.IngressClassName == nil || strings.TrimSpace(*ingress.Spec.IngressClassName) == "" {
 		return nil, fmt.Errorf("ingress %s/%s must have an ingressClassName to determine the target GatewayClass",
 			ingress.Namespace, ingress.Name)
 	}
@@ -98,9 +95,6 @@ func GetConfig(ingress *networkingv1.Ingress, defaultProvider, defaultEmitter st
 	// Set defaults
 	if cfg.GatewayNamespace == "" {
 		cfg.GatewayNamespace = ingress.Namespace
-	}
-	if cfg.RouteNamespace == "" {
-		cfg.RouteNamespace = ingress.Namespace
 	}
 
 	// Validate required fields
@@ -150,4 +144,19 @@ func GetSupportedProviders() []string {
 		providers = append(providers, p)
 	}
 	return providers
+}
+
+func GetIngressClass(ingress *networkingv1.Ingress) string {
+	if ingress == nil {
+		return ""
+	}
+	if ingress.Spec.IngressClassName != nil && *ingress.Spec.IngressClassName != "" {
+		return *ingress.Spec.IngressClassName
+	}
+	if ingress.Annotations != nil {
+		if class, ok := ingress.Annotations["kubernetes.io/ingress.class"]; ok && strings.TrimSpace(class) != "" {
+			return strings.TrimSpace(class)
+		}
+	}
+	return ""
 }

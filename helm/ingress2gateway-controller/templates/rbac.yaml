@@ -14,7 +14,7 @@ rules:
     verbs: ["get", "list", "watch"]
   # Gateway API permissions
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gateways", "httproutes", "grpcroutes"]
+    resources: ["gateways", "httproutes", "grpcroutes", "tlsroutes", "backendtlspolicies"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gatewayclasses"]
@@ -23,9 +23,9 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
-  # Services
+  # Services and Secrets
   - apiGroups: [""]
-    resources: ["services"]
+    resources: ["services", "secrets"]
     verbs: ["get", "list", "watch"]
   # Leader election
   - apiGroups: ["coordination.k8s.io"]

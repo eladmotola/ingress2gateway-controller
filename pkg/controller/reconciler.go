@@ -3,19 +3,23 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	apiequality "k8s.io/apimachinery/pkg/api/equality"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/notifications"
 
 	"github.com/eladm/ingress2gateway-controller/pkg/config"
 	"github.com/eladm/ingress2gateway-controller/pkg/converter"
@@ -30,10 +34,12 @@ const (
 type IngressReconciler struct {
 	client.Client
 	Scheme                            *runtime.Scheme
+	Recorder                          record.EventRecorder
 	Converter                         *converter.Converter
 	DefaultProvider                   string
 	DefaultEmitter                    string
 	IngressClassToGatewayClassMapping map[string]string
+	lastReport                        sync.Map
 }
 
 // Reconcile handles the reconciliation of Ingress resources
@@ -121,6 +127,36 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
+	// Record warnings/notifications from the conversion report
+	if result.Report != nil {
+		rendered := result.Report.Render()
+		ingressKey := client.ObjectKeyFromObject(&ingress)
+		lastRendered, _ := r.lastReport.Load(ingressKey)
+
+		if rendered != "" && rendered != lastRendered {
+			r.lastReport.Store(ingressKey, rendered)
+			for source, notifs := range result.Report.Notifications() {
+				for _, n := range notifs {
+					logger.Info("Conversion notification",
+						"ingress", ingress.Name,
+						"source", source,
+						"type", string(n.Type),
+						"message", n.Message)
+
+					if r.Recorder != nil {
+						eventType := corev1.EventTypeWarning
+						if n.Type == notifications.InfoNotification {
+							eventType = corev1.EventTypeNormal
+						}
+						r.Recorder.Eventf(&ingress, eventType, "ConversionNotification", "[%s] %s", source, n.Message)
+					}
+				}
+			}
+		} else if rendered == "" {
+			r.lastReport.Delete(ingressKey)
+		}
+	}
+
 	// Update Gateway if needed
 	if result.Gateway != nil {
 		if err := r.createOrUpdateGateway(ctx, result.Gateway, &ingress); err != nil {
@@ -131,9 +167,23 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		custmetrics.ResourcesCreated.WithLabelValues("Gateway", cfg.Provider).Inc()
 	}
 
+	findOwner := func(obj client.Object) *networkingv1.Ingress {
+		if ann := obj.GetAnnotations(); ann != nil {
+			if src := ann[config.AnnotationSourceIngress]; src != "" {
+				for i := range sharedIngresses {
+					if fmt.Sprintf("%s/%s", sharedIngresses[i].Namespace, sharedIngresses[i].Name) == src {
+						return &sharedIngresses[i]
+					}
+				}
+			}
+		}
+		return &ingress
+	}
+
 	// Create or update HTTPRoutes
 	for _, httpRoute := range result.HTTPRoutes {
-		if err := r.createOrUpdateHTTPRoute(ctx, httpRoute, &ingress); err != nil {
+		owner := findOwner(httpRoute)
+		if err := r.createOrUpdateHTTPRoute(ctx, httpRoute, owner); err != nil {
 			logger.Error(err, "Failed to create/update HTTPRoute", "httpRoute", httpRoute.Name)
 			custmetrics.ConversionErrorsTotal.WithLabelValues(cfg.Provider, "httproute_creation_failed").Inc()
 			return ctrl.Result{}, err
@@ -143,12 +193,35 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// Create or update GRPCRoutes
 	for _, grpcRoute := range result.GRPCRoutes {
-		if err := r.createOrUpdateGRPCRoute(ctx, grpcRoute, &ingress); err != nil {
+		owner := findOwner(grpcRoute)
+		if err := r.createOrUpdateGRPCRoute(ctx, grpcRoute, owner); err != nil {
 			logger.Error(err, "Failed to create/update GRPCRoute", "grpcRoute", grpcRoute.Name)
 			custmetrics.ConversionErrorsTotal.WithLabelValues(cfg.Provider, "grpcroute_creation_failed").Inc()
 			return ctrl.Result{}, err
 		}
 		custmetrics.ResourcesCreated.WithLabelValues("GRPCRoute", cfg.Provider).Inc()
+	}
+
+	// Create or update TLSRoutes
+	for _, tlsRoute := range result.TLSRoutes {
+		owner := findOwner(tlsRoute)
+		if err := r.createOrUpdateTLSRoute(ctx, tlsRoute, owner); err != nil {
+			logger.Error(err, "Failed to create/update TLSRoute", "tlsRoute", tlsRoute.Name)
+			custmetrics.ConversionErrorsTotal.WithLabelValues(cfg.Provider, "tlsroute_creation_failed").Inc()
+			return ctrl.Result{}, err
+		}
+		custmetrics.ResourcesCreated.WithLabelValues("TLSRoute", cfg.Provider).Inc()
+	}
+
+	// Create or update BackendTLSPolicies
+	for _, policy := range result.BackendTLSPolicies {
+		owner := findOwner(policy)
+		if err := r.createOrUpdateBackendTLSPolicy(ctx, policy, owner); err != nil {
+			logger.Error(err, "Failed to create/update BackendTLSPolicy", "backendTLSPolicy", policy.Name)
+			custmetrics.ConversionErrorsTotal.WithLabelValues(cfg.Provider, "backendtlspolicy_creation_failed").Inc()
+			return ctrl.Result{}, err
+		}
+		custmetrics.ResourcesCreated.WithLabelValues("BackendTLSPolicy", cfg.Provider).Inc()
 	}
 
 	// Record success metrics
@@ -179,6 +252,7 @@ func (r *IngressReconciler) handleDeletion(ctx context.Context, ingress *network
 		return ctrl.Result{}, err
 	}
 
+	r.lastReport.Delete(client.ObjectKeyFromObject(ingress))
 	controllerutil.RemoveFinalizer(ingress, finalizerName)
 	if err := r.Update(ctx, ingress); err != nil {
 		return ctrl.Result{}, err
@@ -229,31 +303,69 @@ func (r *IngressReconciler) cleanupManagedResources(ctx context.Context, ingress
 func (r *IngressReconciler) deleteOrphanRoutes(ctx context.Context, namespace, sourceVal string) error {
 	logger := log.FromContext(ctx)
 
-	// HTTPRoutes
-	httpRoutes := &gatewayv1.HTTPRouteList{}
-	if err := r.List(ctx, httpRoutes, client.InNamespace(namespace)); err == nil {
-		for _, route := range httpRoutes.Items {
-			if route.Annotations != nil && route.Annotations[config.AnnotationSourceIngress] == sourceVal {
-				logger.Info("Deleting orphan HTTPRoute", "name", route.Name)
-				if err := r.Delete(ctx, &route); err != nil {
-					return fmt.Errorf("failed to delete HTTPRoute %s: %w", route.Name, err)
+	deleteOrphans := func(list client.ObjectList, kindName string, getItems func() []client.Object) error {
+		if err := r.List(ctx, list, client.InNamespace(namespace)); err != nil {
+			return fmt.Errorf("failed to list %s: %w", kindName, err)
+		}
+		for _, item := range getItems() {
+			if ann := item.GetAnnotations(); ann != nil && ann[config.AnnotationSourceIngress] == sourceVal {
+				logger.Info("Deleting orphan "+kindName, "name", item.GetName(), "namespace", item.GetNamespace())
+				if err := r.Delete(ctx, item); err != nil && !errors.IsNotFound(err) {
+					return fmt.Errorf("failed to delete %s %s: %w", kindName, item.GetName(), err)
 				}
 			}
 		}
+		return nil
+	}
+
+	// HTTPRoutes
+	httpRoutes := &gatewayv1.HTTPRouteList{}
+	if err := deleteOrphans(httpRoutes, "HTTPRoute", func() []client.Object {
+		objs := make([]client.Object, len(httpRoutes.Items))
+		for i := range httpRoutes.Items {
+			objs[i] = &httpRoutes.Items[i]
+		}
+		return objs
+	}); err != nil {
+		return err
 	}
 
 	// GRPCRoutes
 	grpcRoutes := &gatewayv1.GRPCRouteList{}
-	if err := r.List(ctx, grpcRoutes, client.InNamespace(namespace)); err == nil {
-		for _, route := range grpcRoutes.Items {
-			if route.Annotations != nil && route.Annotations[config.AnnotationSourceIngress] == sourceVal {
-				logger.Info("Deleting orphan GRPCRoute", "name", route.Name)
-				if err := r.Delete(ctx, &route); err != nil {
-					return fmt.Errorf("failed to delete GRPCRoute %s: %w", route.Name, err)
-				}
-			}
+	if err := deleteOrphans(grpcRoutes, "GRPCRoute", func() []client.Object {
+		objs := make([]client.Object, len(grpcRoutes.Items))
+		for i := range grpcRoutes.Items {
+			objs[i] = &grpcRoutes.Items[i]
 		}
+		return objs
+	}); err != nil {
+		return err
 	}
+
+	// TLSRoutes
+	tlsRoutes := &gatewayv1.TLSRouteList{}
+	if err := deleteOrphans(tlsRoutes, "TLSRoute", func() []client.Object {
+		objs := make([]client.Object, len(tlsRoutes.Items))
+		for i := range tlsRoutes.Items {
+			objs[i] = &tlsRoutes.Items[i]
+		}
+		return objs
+	}); err != nil {
+		return err
+	}
+
+	// BackendTLSPolicies
+	policies := &gatewayv1.BackendTLSPolicyList{}
+	if err := deleteOrphans(policies, "BackendTLSPolicy", func() []client.Object {
+		objs := make([]client.Object, len(policies.Items))
+		for i := range policies.Items {
+			objs[i] = &policies.Items[i]
+		}
+		return objs
+	}); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -331,82 +443,84 @@ func (r *IngressReconciler) createOrUpdateGateway(ctx context.Context, gateway *
 	return r.Update(ctx, gateway)
 }
 
-// createOrUpdateHTTPRoute creates or updates an HTTPRoute resource
-func (r *IngressReconciler) createOrUpdateHTTPRoute(ctx context.Context, httpRoute *gatewayv1.HTTPRoute, owner *networkingv1.Ingress) error {
+func createOrUpdateResource[T client.Object](
+	ctx context.Context,
+	r *IngressReconciler,
+	obj T,
+	owner *networkingv1.Ingress,
+	kindName string,
+	newEmpty func() T,
+	getSpec func(T) any,
+) error {
 	logger := log.FromContext(ctx)
 
 	// Set owner reference
-	if err := controllerutil.SetOwnerReference(owner, httpRoute, r.Scheme); err != nil {
+	if err := controllerutil.SetOwnerReference(owner, obj, r.Scheme); err != nil {
 		logger.V(1).Info("Failed to set owner reference", "error", err)
 	}
 
-	// Try to get existing HTTPRoute
-	existing := &gatewayv1.HTTPRoute{}
-	err := r.Get(ctx, client.ObjectKey{Name: httpRoute.Name, Namespace: httpRoute.Namespace}, existing)
+	existing := newEmpty()
+	err := r.Get(ctx, client.ObjectKey{Name: obj.GetName(), Namespace: obj.GetNamespace()}, existing)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Create new HTTPRoute
-			logger.Info("Creating HTTPRoute", "httpRoute", httpRoute.Name, "namespace", httpRoute.Namespace)
-			return r.Create(ctx, httpRoute)
+			logger.Info("Creating "+kindName, "name", obj.GetName(), "namespace", obj.GetNamespace())
+			return r.Create(ctx, obj)
 		}
 		return err
 	}
 
 	// Prepare for update
-	httpRoute.ResourceVersion = existing.ResourceVersion
-	httpRoute.OwnerReferences = existing.OwnerReferences
-	if err := controllerutil.SetOwnerReference(owner, httpRoute, r.Scheme); err != nil {
+	obj.SetResourceVersion(existing.GetResourceVersion())
+	obj.SetOwnerReferences(existing.GetOwnerReferences())
+	if err := controllerutil.SetOwnerReference(owner, obj, r.Scheme); err != nil {
 		logger.V(1).Info("Failed to set owner reference", "error", err)
 	}
 
-	// Update existing HTTPRoute
-	if r.isResourceEqual(existing.ObjectMeta, httpRoute.ObjectMeta, existing.Spec, httpRoute.Spec) {
+	// Update existing object if changed
+	if r.isObjectEqual(existing, obj, getSpec(existing), getSpec(obj)) {
 		return nil
 	}
 
-	logger.Info("Updating HTTPRoute", "httpRoute", httpRoute.Name, "namespace", httpRoute.Namespace)
-	return r.Update(ctx, httpRoute)
+	logger.Info("Updating "+kindName, "name", obj.GetName(), "namespace", obj.GetNamespace())
+	return r.Update(ctx, obj)
 }
 
-// createOrUpdateGRPCRoute creates or updates a GRPCRoute resource
+func (r *IngressReconciler) createOrUpdateHTTPRoute(ctx context.Context, httpRoute *gatewayv1.HTTPRoute, owner *networkingv1.Ingress) error {
+	return createOrUpdateResource(ctx, r, httpRoute, owner, "HTTPRoute", func() *gatewayv1.HTTPRoute { return &gatewayv1.HTTPRoute{} }, func(o *gatewayv1.HTTPRoute) any { return o.Spec })
+}
+
 func (r *IngressReconciler) createOrUpdateGRPCRoute(ctx context.Context, grpcRoute *gatewayv1.GRPCRoute, owner *networkingv1.Ingress) error {
-	logger := log.FromContext(ctx)
+	return createOrUpdateResource(ctx, r, grpcRoute, owner, "GRPCRoute", func() *gatewayv1.GRPCRoute { return &gatewayv1.GRPCRoute{} }, func(o *gatewayv1.GRPCRoute) any { return o.Spec })
+}
 
-	// Set owner reference
-	if err := controllerutil.SetOwnerReference(owner, grpcRoute, r.Scheme); err != nil {
-		logger.V(1).Info("Failed to set owner reference", "error", err)
+func (r *IngressReconciler) createOrUpdateTLSRoute(ctx context.Context, tlsRoute *gatewayv1.TLSRoute, owner *networkingv1.Ingress) error {
+	return createOrUpdateResource(ctx, r, tlsRoute, owner, "TLSRoute", func() *gatewayv1.TLSRoute { return &gatewayv1.TLSRoute{} }, func(o *gatewayv1.TLSRoute) any { return o.Spec })
+}
+
+func (r *IngressReconciler) createOrUpdateBackendTLSPolicy(ctx context.Context, policy *gatewayv1.BackendTLSPolicy, owner *networkingv1.Ingress) error {
+	return createOrUpdateResource(ctx, r, policy, owner, "BackendTLSPolicy", func() *gatewayv1.BackendTLSPolicy { return &gatewayv1.BackendTLSPolicy{} }, func(o *gatewayv1.BackendTLSPolicy) any { return o.Spec })
+}
+
+func (r *IngressReconciler) isObjectEqual(oldObj, newObj client.Object, oldSpec, newSpec any) bool {
+	if !apiequality.Semantic.DeepEqual(oldSpec, newSpec) {
+		return false
+	}
+	if !apiequality.Semantic.DeepEqual(oldObj.GetLabels(), newObj.GetLabels()) {
+		return false
+	}
+	if !apiequality.Semantic.DeepEqual(oldObj.GetOwnerReferences(), newObj.GetOwnerReferences()) {
+		return false
 	}
 
-	// Try to get existing GRPCRoute
-	existing := &gatewayv1.GRPCRoute{}
-	err := r.Get(ctx, client.ObjectKey{Name: grpcRoute.Name, Namespace: grpcRoute.Namespace}, existing)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// Create new GRPCRoute
-			logger.Info("Creating GRPCRoute", "grpcRoute", grpcRoute.Name, "namespace", grpcRoute.Namespace)
-			return r.Create(ctx, grpcRoute)
-		}
-		return err
-	}
+	// Compare annotations but ignore the timestamp
+	oldAnn := filterAnnotations(oldObj.GetAnnotations())
+	newAnn := filterAnnotations(newObj.GetAnnotations())
 
-	// Prepare for update
-	grpcRoute.ResourceVersion = existing.ResourceVersion
-	grpcRoute.OwnerReferences = existing.OwnerReferences
-	if err := controllerutil.SetOwnerReference(owner, grpcRoute, r.Scheme); err != nil {
-		logger.V(1).Info("Failed to set owner reference", "error", err)
-	}
-
-	// Update existing GRPCRoute
-	if r.isResourceEqual(existing.ObjectMeta, grpcRoute.ObjectMeta, existing.Spec, grpcRoute.Spec) {
-		return nil
-	}
-
-	logger.Info("Updating GRPCRoute", "grpcRoute", grpcRoute.Name, "namespace", grpcRoute.Namespace)
-	return r.Update(ctx, grpcRoute)
+	return apiequality.Semantic.DeepEqual(oldAnn, newAnn)
 }
 
 // isResourceEqual compares two resources ignoring the dynamic timestamp annotation
-func (r *IngressReconciler) isResourceEqual(oldMeta, newMeta metav1.ObjectMeta, oldSpec, newSpec interface{}) bool {
+func (r *IngressReconciler) isResourceEqual(oldMeta, newMeta metav1.ObjectMeta, oldSpec, newSpec any) bool {
 	if !apiequality.Semantic.DeepEqual(oldSpec, newSpec) {
 		return false
 	}
@@ -442,10 +556,36 @@ func filterAnnotations(ann map[string]string) map[string]string {
 
 // SetupWithManager sets up the controller with the Manager
 func (r *IngressReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&networkingv1.Ingress{}).
 		Owns(&gatewayv1.Gateway{}).
 		Owns(&gatewayv1.HTTPRoute{}).
-		Owns(&gatewayv1.GRPCRoute{}).
-		Complete(r)
+		Owns(&gatewayv1.GRPCRoute{})
+
+	if isCRDInstalled(mgr, &gatewayv1.TLSRoute{}) {
+		builder = builder.Owns(&gatewayv1.TLSRoute{})
+	} else {
+		ctrl.Log.WithName("setup").Info("TLSRoute CRD not installed; skipping controller watch")
+	}
+
+	if isCRDInstalled(mgr, &gatewayv1.BackendTLSPolicy{}) {
+		builder = builder.Owns(&gatewayv1.BackendTLSPolicy{})
+	} else {
+		ctrl.Log.WithName("setup").Info("BackendTLSPolicy CRD not installed; skipping controller watch")
+	}
+
+	return builder.Complete(r)
+}
+
+func isCRDInstalled(mgr ctrl.Manager, obj client.Object) bool {
+	gvk, _, err := mgr.GetScheme().ObjectKinds(obj)
+	if err != nil || len(gvk) == 0 {
+		return false
+	}
+	restMapper := mgr.GetRESTMapper()
+	if restMapper == nil {
+		return false
+	}
+	mapping, err := restMapper.RESTMapping(gvk[0].GroupKind(), gvk[0].Version)
+	return err == nil && mapping != nil
 }

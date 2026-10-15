@@ -2,7 +2,7 @@
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/eladm/ingress2gateway-controller)](https://goreportcard.com/report/github.com/eladm/ingress2gateway-controller)
 
-The `ingress2gateway-controller` is a Kubernetes operator that automatically and continuously converts standard **Ingress** resources into the modern **Gateway API** resources (`Gateway` and `HTTPRoute`).
+The `ingress2gateway-controller` is a Kubernetes operator that automatically and continuously converts standard **Ingress** resources into the modern **Gateway API** resources (`Gateway`, `HTTPRoute`, `GRPCRoute`, `TLSRoute`, and `BackendTLSPolicy`).
 
 It bridges the gap between the legacy Ingress API and the powerful, role-oriented Gateway API, allowing you to migrate your traffic management at your own pace while maintaining a single source of truth.
 
@@ -93,7 +93,6 @@ controller:
 |------------|-------------|---------|
 | `ingress2gateway.io/provider` | The source provider logic to use (e.g., `nginx`, `istio`). | Global default |
 | `ingress2gateway.io/gateway-namespace` | The namespace where the `Gateway` resource will be created. | Ingress namespace |
-| `ingress2gateway.io/route-namespace` | The namespace where the `HTTPRoute` or `GRPCRoute` resource will be created. | Ingress namespace |
 
 ## Example
 
@@ -121,4 +120,4 @@ spec:
               number: 80
 ```
 
-The controller will automatically create a `Gateway` (if it doesn't exist) and an `HTTPRoute` (or `GRPCRoute`) pointing to `my-app-service`.
+The controller will automatically create a `Gateway` (if it doesn't exist) and an `HTTPRoute` (or `GRPCRoute` / `TLSRoute` / `BackendTLSPolicy`) pointing to `my-app-service`.

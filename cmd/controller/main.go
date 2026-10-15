@@ -101,6 +101,7 @@ func main() {
 	if err = (&controller.IngressReconciler{
 		Client:                            mgr.GetClient(),
 		Scheme:                            mgr.GetScheme(),
+		Recorder:                          mgr.GetEventRecorderFor("ingress2gateway-controller"),
 		Converter:                         conv,
 		DefaultProvider:                   defaultProvider,
 		DefaultEmitter:                    defaultEmitter,

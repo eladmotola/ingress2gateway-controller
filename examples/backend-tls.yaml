@@ -1,0 +1,35 @@
+# Example: Backend TLS Conversion Mode (BackendTLSPolicy)
+#
+# This example demonstrates creating a Gateway, an HTTPRoute, and a
+# BackendTLSPolicy resource for backend TLS validation.
+#
+# Note: The Secret referenced in nginx.ingress.kubernetes.io/proxy-ssl-secret
+# (e.g. "default/backend-ca") must exist in the cluster and contain a "ca.crt" key
+# with the valid PEM-encoded CA certificate used to verify backend TLS connections.
+#
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend-tls
+  namespace: default
+  annotations:
+    ingress2gateway.io/enabled: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/proxy-ssl-verify: "on"
+    nginx.ingress.kubernetes.io/proxy-ssl-secret: "default/backend-ca"
+    nginx.ingress.kubernetes.io/proxy-ssl-name: "backend.example.com"
+    nginx.ingress.kubernetes.io/proxy-ssl-server-name: "on"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 443
