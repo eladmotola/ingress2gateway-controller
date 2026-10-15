@@ -61,6 +61,23 @@ func TestGetConfig(t *testing.T) {
 			wantErr:      true,
 		},
 		{
+			name: "empty IngressClassName",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-ingress",
+					Namespace: "default",
+					Annotations: map[string]string{
+						AnnotationEnabled: "true",
+					},
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To(""),
+				},
+			},
+			classMapping: map[string]string{"nginx": "nginx"},
+			wantErr:      true,
+		},
+		{
 			name: "IngressClass not in mapping",
 			ingress: &networkingv1.Ingress{
 				ObjectMeta: metav1.ObjectMeta{

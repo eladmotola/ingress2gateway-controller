@@ -490,3 +490,190 @@ func TestConvertBackendTLSPolicy(t *testing.T) {
 	assert.Contains(t, rendered, "mTLS will not be configured")
 	assert.Contains(t, rendered, "ConfigMap")
 }
+
+func TestConvertNginxBackendTLSPolicy_MissingSecret(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, networkingv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
+
+	// Fake client without the referenced secret
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	c := New(fakeClient, scheme)
+	ctx := context.Background()
+
+	pathTypePrefix := networkingv1.PathTypePrefix
+	ingress := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "backend-tls-missing-secret",
+			Namespace: "default",
+			Annotations: map[string]string{
+				"nginx.ingress.kubernetes.io/backend-protocol":      "HTTPS",
+				"nginx.ingress.kubernetes.io/proxy-ssl-verify":      "on",
+				"nginx.ingress.kubernetes.io/proxy-ssl-secret":      "default/non-existent-secret",
+				"nginx.ingress.kubernetes.io/proxy-ssl-name":        "backend.example.com",
+				"nginx.ingress.kubernetes.io/proxy-ssl-server-name": "on",
+			},
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: stringPtr("nginx"),
+			Rules: []networkingv1.IngressRule{
+				{
+					Host: "app.example.com",
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path:     "/",
+									PathType: &pathTypePrefix,
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: "backend",
+											Port: networkingv1.ServiceBackendPort{
+												Number: 443,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := &config.Config{
+		GatewayName:      "nginx",
+		GatewayNamespace: "default",
+		GatewayClass:     "nginx",
+		Provider:         "ingress-nginx",
+		Emitter:          "standard",
+	}
+
+	result, err := c.Convert(ctx, []networkingv1.Ingress{*ingress}, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, result.Report)
+
+	// Verify notification about missing secret is recorded
+	notifs := result.Report.Notifications()
+	require.NotNil(t, notifs)
+	found := false
+	for _, nList := range notifs {
+		for _, n := range nList {
+			if strings.Contains(n.Message, "proxy-ssl-secret") && strings.Contains(n.Message, "non-existent-secret") {
+				found = true
+				break
+			}
+		}
+	}
+	assert.True(t, found, "Expected notification about missing proxy-ssl-secret in report")
+}
+
+func TestConvertOverlappingIngressNames(t *testing.T) {
+	c, ctx := newTestConverter(t)
+	pathTypePrefix := networkingv1.PathTypePrefix
+
+	ingApp := networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "app",
+			Namespace: "default",
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: stringPtr("nginx"),
+			Rules: []networkingv1.IngressRule{
+				{
+					Host: "app.example.com",
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path:     "/",
+									PathType: &pathTypePrefix,
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: "app-svc",
+											Port: networkingv1.ServiceBackendPort{
+												Number: 80,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ingAppApi := networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "app-api",
+			Namespace: "default",
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: stringPtr("nginx"),
+			Rules: []networkingv1.IngressRule{
+				{
+					Host: "api.example.com",
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path:     "/",
+									PathType: &pathTypePrefix,
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: "api-svc",
+											Port: networkingv1.ServiceBackendPort{
+												Number: 80,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := &config.Config{
+		GatewayName:      "nginx",
+		GatewayNamespace: "default",
+		GatewayClass:     "nginx",
+		Provider:         "ingress-nginx",
+		Emitter:          "standard",
+	}
+
+	result, err := c.Convert(ctx, []networkingv1.Ingress{ingApp, ingAppApi}, cfg)
+	require.NoError(t, err)
+	require.Len(t, result.HTTPRoutes, 2)
+
+	for _, route := range result.HTTPRoutes {
+		if strings.Contains(route.Name, "api.example.com") || strings.HasPrefix(route.Name, "app-api") {
+			assert.Equal(t, "default/app-api", route.Annotations[config.AnnotationSourceIngress], "Route for app-api must not match app")
+		} else {
+			assert.Equal(t, "default/app", route.Annotations[config.AnnotationSourceIngress])
+		}
+	}
+}
+
+func TestConvertRouteNamespaceAnnotationIgnored(t *testing.T) {
+	c, ctx := newTestConverter(t)
+	ingress := basicIngress()
+	ingress.Annotations = map[string]string{
+		"ingress2gateway.io/route-namespace": "ignored-custom-ns",
+	}
+
+	cfg := basicConfig("standard")
+	result, err := c.Convert(ctx, []networkingv1.Ingress{*ingress}, cfg)
+	require.NoError(t, err)
+	require.Len(t, result.HTTPRoutes, 1)
+
+	// Route must be created in Ingress's namespace ("default"), ignoring route-namespace annotation
+	assert.Equal(t, "default", result.HTTPRoutes[0].Namespace)
+	assert.NotEqual(t, "ignored-custom-ns", result.HTTPRoutes[0].Namespace)
+}

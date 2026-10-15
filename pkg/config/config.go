@@ -78,7 +78,7 @@ func GetConfig(ingress *networkingv1.Ingress, defaultProvider, defaultEmitter st
 	}
 
 	// Resolve GatewayName and GatewayClass from the mapping using the IngressClassName
-	if ingress.Spec.IngressClassName == nil {
+	if ingress.Spec.IngressClassName == nil || strings.TrimSpace(*ingress.Spec.IngressClassName) == "" {
 		return nil, fmt.Errorf("ingress %s/%s must have an ingressClassName to determine the target GatewayClass",
 			ingress.Namespace, ingress.Name)
 	}

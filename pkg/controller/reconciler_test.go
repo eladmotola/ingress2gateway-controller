@@ -10,8 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -267,4 +269,135 @@ func TestReconcileBackendTLSPolicy(t *testing.T) {
 	// BackendTLSPolicy should be deleted
 	err = fakeClient.Get(ctx, types.NamespacedName{Namespace: "default", Name: "backend-backend-tls"}, policy)
 	assert.True(t, err != nil, "BackendTLSPolicy should be deleted after Ingress deletion")
+}
+
+func TestDeleteOrphanRoutes_NewKinds(t *testing.T) {
+	ctx := context.Background()
+
+	tlsRoute1 := &gatewayv1.TLSRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tls-route-1",
+			Namespace: "default",
+			Annotations: map[string]string{
+				config.AnnotationSourceIngress: "default/my-ingress",
+			},
+		},
+	}
+	tlsRouteOther := &gatewayv1.TLSRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tls-route-other",
+			Namespace: "default",
+			Annotations: map[string]string{
+				config.AnnotationSourceIngress: "default/other-ingress",
+			},
+		},
+	}
+	policy1 := &gatewayv1.BackendTLSPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "policy-1",
+			Namespace: "default",
+			Annotations: map[string]string{
+				config.AnnotationSourceIngress: "default/my-ingress",
+			},
+		},
+	}
+
+	reconciler, fakeClient, _ := setupTestReconciler(t, tlsRoute1, tlsRouteOther, policy1)
+
+	err := reconciler.deleteOrphanRoutes(ctx, "default", "default/my-ingress")
+	require.NoError(t, err)
+
+	// tlsRoute1 and policy1 should be deleted
+	checkTLSRoute := &gatewayv1.TLSRoute{}
+	err = fakeClient.Get(ctx, types.NamespacedName{Namespace: "default", Name: "tls-route-1"}, checkTLSRoute)
+	assert.Error(t, err, "tls-route-1 should have been deleted")
+
+	checkPolicy := &gatewayv1.BackendTLSPolicy{}
+	err = fakeClient.Get(ctx, types.NamespacedName{Namespace: "default", Name: "policy-1"}, checkPolicy)
+	assert.Error(t, err, "policy-1 should have been deleted")
+
+	// tlsRouteOther should remain
+	err = fakeClient.Get(ctx, types.NamespacedName{Namespace: "default", Name: "tls-route-other"}, checkTLSRoute)
+	assert.NoError(t, err, "tls-route-other must not be deleted")
+}
+
+func TestDeleteOrphanRoutes_CRDNotInstalled(t *testing.T) {
+	// Verify isKindNotInstalled correctly recognizes missing CRD errors
+	noMatchErr := &meta.NoKindMatchError{
+		GroupKind: schema.GroupKind{Group: "gateway.networking.k8s.io", Kind: "TLSRoute"},
+	}
+	assert.True(t, isKindNotInstalled(noMatchErr))
+
+	notRegErr := runtime.NewNotRegisteredErrForKind("my-scheme", schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "TLSRoute"})
+	assert.True(t, isKindNotInstalled(notRegErr))
+
+	// Non-missing-CRD errors must return false
+	assert.False(t, isKindNotInstalled(nil))
+	assert.False(t, isKindNotInstalled(assert.AnError))
+}
+
+func TestReconciler_DeduplicateNotificationEvents(t *testing.T) {
+	ctx := context.Background()
+	pathTypePrefix := networkingv1.PathTypePrefix
+
+	ingress := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "dedup-test",
+			Namespace: "default",
+			Annotations: map[string]string{
+				config.AnnotationEnabled:                      "true",
+				"nginx.ingress.kubernetes.io/ssl-passthrough": "true",
+			},
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: stringPtr("nginx"),
+			Rules: []networkingv1.IngressRule{
+				{
+					Host: "app.example.com",
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path:     "/",
+									PathType: &pathTypePrefix,
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: "app",
+											Port: networkingv1.ServiceBackendPort{Number: 443},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	reconciler, _, fakeRecorder := setupTestReconciler(t, ingress)
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: "default",
+			Name:      "dedup-test",
+		},
+	}
+
+	// 1. First reconcile emits events
+	_, err := reconciler.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	eventCount1 := len(fakeRecorder.Events)
+	assert.Greater(t, eventCount1, 0, "First reconcile should emit events")
+
+	// Drain events
+	for len(fakeRecorder.Events) > 0 {
+		<-fakeRecorder.Events
+	}
+
+	// 2. Second reconcile (periodic resync, unchanged report) should not emit duplicate events
+	_, err = reconciler.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, len(fakeRecorder.Events), "Periodic resync should deduplicate and not re-emit duplicate events")
 }

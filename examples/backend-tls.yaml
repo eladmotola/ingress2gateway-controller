@@ -3,6 +3,10 @@
 # This example demonstrates creating a Gateway, an HTTPRoute, and a
 # BackendTLSPolicy resource for backend TLS validation.
 #
+# Note: The Secret referenced in nginx.ingress.kubernetes.io/proxy-ssl-secret
+# (e.g. "default/backend-ca") must exist in the cluster and contain a "ca.crt" key
+# with the valid PEM-encoded CA certificate used to verify backend TLS connections.
+#
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

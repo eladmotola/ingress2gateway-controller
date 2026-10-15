@@ -77,7 +77,8 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 	// 1. Prepare the Fake Client with Ingress and related Service objects.
 	// ------------------------------------------------------------------
 	providerName := cfg.Provider
-	objects, err := c.buildFakeClientObjects(ctx, ingresses, providerName)
+	report := notifications.NewReport(true)
+	objects, err := c.buildFakeClientObjects(ctx, ingresses, providerName, report)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build fake client objects: %w", err)
 	}
@@ -96,7 +97,6 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 	//    We dynamically set the ingress-class flag to match what's on the
 	//    actual Ingress objects so they aren't filtered out by the reader.
 	// ------------------------------------------------------------------
-	report := notifications.NewReport(true)
 	providerConf := &i2gw.ProviderConf{
 		Client:                fakeClient,
 		ProviderSpecificFlags: buildProviderSpecificFlags(ingresses, providerName),
@@ -177,27 +177,47 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 	// Fix up each HTTPRoute: ParentRefs and source annotations.
 	for _, route := range gatewayResources.HTTPRoutes {
 		c.setParentRef(&route.Spec.CommonRouteSpec, result.Gateway)
-		config.AddSourceAnnotations(&route, c.findSourceIngress(ingresses, route.Name), cfg.Provider)
+		srcIng := c.findSourceIngress(ingresses, route.Name)
+		if srcIng != nil {
+			config.AddSourceAnnotations(&route, srcIng, cfg.Provider)
+		} else {
+			logger.Info("Could not determine source Ingress for HTTPRoute; skipping source annotations", "httpRoute", route.Name)
+		}
 		result.HTTPRoutes = append(result.HTTPRoutes, &route)
 	}
 
 	// Fix up each GRPCRoute: ParentRefs and source annotations.
 	for _, route := range gatewayResources.GRPCRoutes {
 		c.setParentRef(&route.Spec.CommonRouteSpec, result.Gateway)
-		config.AddSourceAnnotations(&route, c.findSourceIngress(ingresses, route.Name), cfg.Provider)
+		srcIng := c.findSourceIngress(ingresses, route.Name)
+		if srcIng != nil {
+			config.AddSourceAnnotations(&route, srcIng, cfg.Provider)
+		} else {
+			logger.Info("Could not determine source Ingress for GRPCRoute; skipping source annotations", "grpcRoute", route.Name)
+		}
 		result.GRPCRoutes = append(result.GRPCRoutes, &route)
 	}
 
 	// Fix up each TLSRoute: ParentRefs and source annotations.
 	for _, route := range gatewayResources.TLSRoutes {
 		c.setParentRef(&route.Spec.CommonRouteSpec, result.Gateway)
-		config.AddSourceAnnotations(&route, c.findSourceIngress(ingresses, route.Name), cfg.Provider)
+		srcIng := c.findSourceIngress(ingresses, route.Name)
+		if srcIng != nil {
+			config.AddSourceAnnotations(&route, srcIng, cfg.Provider)
+		} else {
+			logger.Info("Could not determine source Ingress for TLSRoute; skipping source annotations", "tlsRoute", route.Name)
+		}
 		result.TLSRoutes = append(result.TLSRoutes, &route)
 	}
 
 	// Fix up each BackendTLSPolicy: source annotations.
 	for _, policy := range gatewayResources.BackendTLSPolicies {
-		config.AddSourceAnnotations(&policy, c.findSourceIngress(ingresses, policy.Name), cfg.Provider)
+		srcIng := c.findSourceIngress(ingresses, policy.Name)
+		if srcIng != nil {
+			config.AddSourceAnnotations(&policy, srcIng, cfg.Provider)
+		} else {
+			logger.Info("Could not determine source Ingress for BackendTLSPolicy; skipping source annotations", "backendTLSPolicy", policy.Name)
+		}
 		result.BackendTLSPolicies = append(result.BackendTLSPolicies, &policy)
 	}
 
@@ -209,7 +229,6 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 			}
 		}
 		if rendered := report.Render(); strings.TrimSpace(rendered) != "" {
-			fmt.Printf("Conversion report warnings:\n%s\n", rendered)
 			logger.Info("Conversion report warnings:\n" + rendered)
 		}
 	}
@@ -247,22 +266,38 @@ func (c *Converter) setParentRef(spec *gatewayv1.CommonRouteSpec, gateway *gatew
 	}
 }
 
-// findSourceIngress attempts to find the Ingress that generated a specific route.
-// It matches by checking if the Ingress name is a substring of the route name (library convention).
-func (c *Converter) findSourceIngress(ingresses []networkingv1.Ingress, routeName string) *networkingv1.Ingress {
-	if len(ingresses) == 1 {
-		return &ingresses[0]
-	}
+// findSourceIngress attempts to find the Ingress that generated a specific route or policy.
+// It uses separator-aware matching and picks the best (longest) match among ingresses.
+// If no match is found, it returns nil instead of falling back silently.
+func (c *Converter) findSourceIngress(ingresses []networkingv1.Ingress, resourceName string) *networkingv1.Ingress {
+	var bestMatch *networkingv1.Ingress
+	bestLen := -1
+
 	for i := range ingresses {
-		if strings.Contains(routeName, ingresses[i].Name) {
-			return &ingresses[i]
+		ingName := ingresses[i].Name
+		matched := false
+
+		if resourceName == ingName {
+			matched = true
+		} else if strings.HasPrefix(resourceName, ingName+"-") {
+			matched = true
+		} else if strings.HasSuffix(resourceName, "-"+ingName) {
+			matched = true
+		} else if strings.Contains(resourceName, "-"+ingName+"-") {
+			matched = true
+		}
+
+		if matched && len(ingName) > bestLen {
+			bestMatch = &ingresses[i]
+			bestLen = len(ingName)
 		}
 	}
-	return &ingresses[0] // fallback
+
+	return bestMatch
 }
 
 // buildFakeClientObjects gathers the Ingresses and any referenced Services to populate the fake client.
-func (c *Converter) buildFakeClientObjects(ctx context.Context, ingresses []networkingv1.Ingress, providerName string) ([]client.Object, error) {
+func (c *Converter) buildFakeClientObjects(ctx context.Context, ingresses []networkingv1.Ingress, providerName string, report *notifications.Report) ([]client.Object, error) {
 	objects := c.ingressesToClientObjects(ingresses)
 
 	// Fetch referenced services for named port resolution
@@ -284,7 +319,7 @@ func (c *Converter) buildFakeClientObjects(ctx context.Context, ingresses []netw
 
 	// Fetch provider-specific objects
 	if providerName == "ingress-nginx" {
-		objects = append(objects, fetchNginxSpecificObjects(ctx, c.client, ingresses)...)
+		objects = append(objects, fetchNginxIngressSpecificObjects(ctx, c.client, ingresses, report)...)
 	}
 
 	return objects, nil
