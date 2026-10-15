@@ -93,7 +93,6 @@ controller:
 |------------|-------------|---------|
 | `ingress2gateway.io/provider` | The source provider logic to use (e.g., `nginx`, `istio`). | Global default |
 | `ingress2gateway.io/gateway-namespace` | The namespace where the `Gateway` resource will be created. | Ingress namespace |
-| `ingress2gateway.io/route-namespace` | The namespace where the `HTTPRoute`, `GRPCRoute`, `TLSRoute`, or `BackendTLSPolicy` resource will be created. | Ingress namespace |
 
 ## Example
 
