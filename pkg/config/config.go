@@ -13,7 +13,6 @@ const (
 	// Annotation keys for Ingress configuration
 	AnnotationProvider         = "ingress2gateway.io/provider"
 	AnnotationGatewayNamespace = "ingress2gateway.io/gateway-namespace"
-	AnnotationRouteNamespace   = "ingress2gateway.io/route-namespace"
 	AnnotationEmitter          = "ingress2gateway.io/emitter"
 	AnnotationEnabled          = "ingress2gateway.io/enabled"
 
@@ -76,7 +75,6 @@ func GetConfig(ingress *networkingv1.Ingress, defaultProvider, defaultEmitter st
 	cfg := &Config{
 		Provider:         provider,
 		GatewayNamespace: strings.TrimSpace(ingress.Annotations[AnnotationGatewayNamespace]),
-		RouteNamespace:   strings.TrimSpace(ingress.Annotations[AnnotationRouteNamespace]),
 		Emitter:          emitter,
 	}
 
@@ -98,9 +96,6 @@ func GetConfig(ingress *networkingv1.Ingress, defaultProvider, defaultEmitter st
 	// Set defaults
 	if cfg.GatewayNamespace == "" {
 		cfg.GatewayNamespace = ingress.Namespace
-	}
-	if cfg.RouteNamespace == "" {
-		cfg.RouteNamespace = ingress.Namespace
 	}
 
 	// Validate required fields

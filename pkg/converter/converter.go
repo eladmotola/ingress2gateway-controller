@@ -176,7 +176,7 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 
 	// Fix up each HTTPRoute: namespace, ParentRefs, and source annotations.
 	for _, route := range gatewayResources.HTTPRoutes {
-		route.Namespace = cfg.RouteNamespace
+		// route.Namespace = cfg.RouteNamespace
 		c.setParentRef(&route.Spec.CommonRouteSpec, result.Gateway)
 		config.AddSourceAnnotations(&route, c.findSourceIngress(ingresses, route.Name), cfg.Provider)
 		result.HTTPRoutes = append(result.HTTPRoutes, &route)
@@ -184,7 +184,7 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 
 	// Fix up each GRPCRoute: namespace, ParentRefs, and source annotations.
 	for _, route := range gatewayResources.GRPCRoutes {
-		route.Namespace = cfg.RouteNamespace
+		// route.Namespace = cfg.RouteNamespace
 		c.setParentRef(&route.Spec.CommonRouteSpec, result.Gateway)
 		config.AddSourceAnnotations(&route, c.findSourceIngress(ingresses, route.Name), cfg.Provider)
 		result.GRPCRoutes = append(result.GRPCRoutes, &route)
@@ -192,7 +192,7 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 
 	// Fix up each TLSRoute: namespace, ParentRefs, and source annotations.
 	for _, route := range gatewayResources.TLSRoutes {
-		route.Namespace = cfg.RouteNamespace
+		// route.Namespace = cfg.RouteNamespace
 		c.setParentRef(&route.Spec.CommonRouteSpec, result.Gateway)
 		config.AddSourceAnnotations(&route, c.findSourceIngress(ingresses, route.Name), cfg.Provider)
 		result.TLSRoutes = append(result.TLSRoutes, &route)
@@ -200,7 +200,7 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 
 	// Fix up each BackendTLSPolicy: namespace and source annotations.
 	for _, policy := range gatewayResources.BackendTLSPolicies {
-		policy.Namespace = cfg.RouteNamespace
+		// policy.Namespace = cfg.RouteNamespace
 		config.AddSourceAnnotations(&policy, c.findSourceIngress(ingresses, policy.Name), cfg.Provider)
 		result.BackendTLSPolicies = append(result.BackendTLSPolicies, &policy)
 	}
