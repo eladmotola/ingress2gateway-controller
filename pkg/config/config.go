@@ -34,7 +34,6 @@ type Config struct {
 	GatewayName      string
 	GatewayClass     string
 	GatewayNamespace string
-	RouteNamespace   string
 	Emitter          string
 }
 

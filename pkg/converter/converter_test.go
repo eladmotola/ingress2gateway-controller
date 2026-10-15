@@ -69,7 +69,6 @@ func basicConfig(emitter string) *config.Config {
 		GatewayName:      "nginx",
 		GatewayNamespace: "gateway-ns",
 		GatewayClass:     "my-gateway-class",
-		RouteNamespace:   "route-ns",
 		Provider:         "ingress-nginx",
 		Emitter:          emitter,
 	}
@@ -124,7 +123,7 @@ func TestConvertEmitters(t *testing.T) {
 
 			require.Len(t, result.HTTPRoutes, 1)
 			route := result.HTTPRoutes[0]
-			assert.Equal(t, "route-ns", route.Namespace)
+			assert.Equal(t, "default", route.Namespace)
 			assert.Equal(t, "example.com", string(route.Spec.Hostnames[0]))
 			require.Len(t, route.Spec.Rules, 1)
 			require.Len(t, route.Spec.Rules[0].BackendRefs, 1)
@@ -199,7 +198,6 @@ func TestConvert(t *testing.T) {
 				GatewayName:      "nginx",
 				GatewayNamespace: "gateway-ns",
 				GatewayClass:     "my-gateway-class",
-				RouteNamespace:   "route-ns",
 				Provider:         "ingress-nginx",
 			},
 			expectedGateway: &gatewayv1.Gateway{
@@ -214,7 +212,7 @@ func TestConvert(t *testing.T) {
 			validateRoutes: func(t *testing.T, routes []*gatewayv1.HTTPRoute) {
 				require.Len(t, routes, 1)
 				route := routes[0]
-				assert.Equal(t, "route-ns", route.Namespace)
+				assert.Equal(t, "default", route.Namespace)
 				assert.Equal(t, "example.com", string(route.Spec.Hostnames[0]))
 
 				require.Len(t, route.Spec.Rules, 1)
@@ -328,7 +326,6 @@ func TestConvertTLSRoute(t *testing.T) {
 		GatewayName:      "nginx",
 		GatewayNamespace: "default",
 		GatewayClass:     "nginx",
-		RouteNamespace:   "default",
 		Provider:         "ingress-nginx",
 		Emitter:          "standard",
 	}
@@ -453,7 +450,6 @@ func TestConvertBackendTLSPolicy(t *testing.T) {
 		GatewayName:      "nginx",
 		GatewayNamespace: "default",
 		GatewayClass:     "nginx",
-		RouteNamespace:   "default",
 		Provider:         "ingress-nginx",
 		Emitter:          "standard",
 	}

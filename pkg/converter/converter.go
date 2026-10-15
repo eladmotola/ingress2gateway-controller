@@ -154,8 +154,8 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 
 	// ------------------------------------------------------------------
 	// 8. Post-Process the created resources.
-	//    We override namespaces to match cfg.GatewayNamespace and
-	//    cfg.RouteNamespace, and add our tracking annotations.
+	//    We override the Gateway namespace to match cfg.GatewayNamespace
+	//    and add our tracking annotations.
 	// ------------------------------------------------------------------
 	result := &ConversionResult{
 		HTTPRoutes:         make([]*gatewayv1.HTTPRoute, 0),
@@ -174,33 +174,29 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 		break // We support one managed Gateway per reconciliation group
 	}
 
-	// Fix up each HTTPRoute: namespace, ParentRefs, and source annotations.
+	// Fix up each HTTPRoute: ParentRefs and source annotations.
 	for _, route := range gatewayResources.HTTPRoutes {
-		// route.Namespace = cfg.RouteNamespace
 		c.setParentRef(&route.Spec.CommonRouteSpec, result.Gateway)
 		config.AddSourceAnnotations(&route, c.findSourceIngress(ingresses, route.Name), cfg.Provider)
 		result.HTTPRoutes = append(result.HTTPRoutes, &route)
 	}
 
-	// Fix up each GRPCRoute: namespace, ParentRefs, and source annotations.
+	// Fix up each GRPCRoute: ParentRefs and source annotations.
 	for _, route := range gatewayResources.GRPCRoutes {
-		// route.Namespace = cfg.RouteNamespace
 		c.setParentRef(&route.Spec.CommonRouteSpec, result.Gateway)
 		config.AddSourceAnnotations(&route, c.findSourceIngress(ingresses, route.Name), cfg.Provider)
 		result.GRPCRoutes = append(result.GRPCRoutes, &route)
 	}
 
-	// Fix up each TLSRoute: namespace, ParentRefs, and source annotations.
+	// Fix up each TLSRoute: ParentRefs and source annotations.
 	for _, route := range gatewayResources.TLSRoutes {
-		// route.Namespace = cfg.RouteNamespace
 		c.setParentRef(&route.Spec.CommonRouteSpec, result.Gateway)
 		config.AddSourceAnnotations(&route, c.findSourceIngress(ingresses, route.Name), cfg.Provider)
 		result.TLSRoutes = append(result.TLSRoutes, &route)
 	}
 
-	// Fix up each BackendTLSPolicy: namespace and source annotations.
+	// Fix up each BackendTLSPolicy: source annotations.
 	for _, policy := range gatewayResources.BackendTLSPolicies {
-		// policy.Namespace = cfg.RouteNamespace
 		config.AddSourceAnnotations(&policy, c.findSourceIngress(ingresses, policy.Name), cfg.Provider)
 		result.BackendTLSPolicies = append(result.BackendTLSPolicies, &policy)
 	}
