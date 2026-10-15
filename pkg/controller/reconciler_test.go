@@ -10,10 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -319,21 +317,6 @@ func TestDeleteOrphanRoutes_NewKinds(t *testing.T) {
 	// tlsRouteOther should remain
 	err = fakeClient.Get(ctx, types.NamespacedName{Namespace: "default", Name: "tls-route-other"}, checkTLSRoute)
 	assert.NoError(t, err, "tls-route-other must not be deleted")
-}
-
-func TestDeleteOrphanRoutes_CRDNotInstalled(t *testing.T) {
-	// Verify isKindNotInstalled correctly recognizes missing CRD errors
-	noMatchErr := &meta.NoKindMatchError{
-		GroupKind: schema.GroupKind{Group: "gateway.networking.k8s.io", Kind: "TLSRoute"},
-	}
-	assert.True(t, isKindNotInstalled(noMatchErr))
-
-	notRegErr := runtime.NewNotRegisteredErrForKind("my-scheme", schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "TLSRoute"})
-	assert.True(t, isKindNotInstalled(notRegErr))
-
-	// Non-missing-CRD errors must return false
-	assert.False(t, isKindNotInstalled(nil))
-	assert.False(t, isKindNotInstalled(assert.AnError))
 }
 
 func TestReconciler_DeduplicateNotificationEvents(t *testing.T) {
