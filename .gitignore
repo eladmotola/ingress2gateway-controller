@@ -7,6 +7,8 @@
 /controller
 *.test
 *.out
+coverage
+coverage.out
 
 # Go
 vendor/
