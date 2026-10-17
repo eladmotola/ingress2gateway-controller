@@ -90,8 +90,8 @@ func TestFetchNginxIngressSpecificObjects(t *testing.T) {
 				},
 			},
 		}
-		report := notifications.NewReport()
-		objs := fetchNginxIngressSpecificObjects(ctx, fakeClient, []networkingv1.Ingress{ing}, &report)
+		report := notifications.NewReport(true)
+		objs := fetchNginxIngressSpecificObjects(ctx, fakeClient, []networkingv1.Ingress{ing}, report)
 		assert.Empty(t, objs)
 	})
 }

@@ -20,11 +20,8 @@ func TestMetricsRegistrationAndTracking(t *testing.T) {
 		ConversionDuration.WithLabelValues("nginx").Observe(0.123)
 		ResourcesCreated.WithLabelValues("HTTPRoute", "nginx").Add(2)
 
-		timer := prometheusNewTimer := func() {
-			start := time.Now()
-			time.Sleep(1 * time.Millisecond)
-			ConversionDuration.WithLabelValues("nginx").Observe(time.Since(start).Seconds())
-		}
-		prometheusNewTimer()
+		start := time.Now()
+		time.Sleep(1 * time.Millisecond)
+		ConversionDuration.WithLabelValues("nginx").Observe(time.Since(start).Seconds())
 	})
 }

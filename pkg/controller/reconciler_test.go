@@ -486,8 +486,13 @@ func TestCreateOrUpdateGateway_Conflict(t *testing.T) {
 	assert.Contains(t, err.Error(), "conflict")
 }
 
-func TestRemoveOwnerReferenceOrDelete(t *testing.T) {
+func TestRemoveOwnerReference(t *testing.T) {
 	ctx := context.Background()
+	owner := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			UID: "my-uid",
+		},
+	}
 
 	t.Run("owner not found", func(t *testing.T) {
 		reconciler, _, _ := setupTestReconciler(t)
@@ -500,7 +505,7 @@ func TestRemoveOwnerReferenceOrDelete(t *testing.T) {
 				},
 			},
 		}
-		err := reconciler.removeOwnerReferenceOrDelete(ctx, obj, types.UID("my-uid"))
+		err := reconciler.removeOwnerReference(ctx, obj, owner)
 		assert.NoError(t, err)
 	})
 
@@ -515,7 +520,7 @@ func TestRemoveOwnerReferenceOrDelete(t *testing.T) {
 			},
 		}
 		reconciler, fakeClient, _ := setupTestReconciler(t, obj)
-		err := reconciler.removeOwnerReferenceOrDelete(ctx, obj, types.UID("my-uid"))
+		err := reconciler.removeOwnerReference(ctx, obj, owner)
 		assert.NoError(t, err)
 
 		getErr := fakeClient.Get(ctx, client.ObjectKeyFromObject(obj), &gatewayv1.HTTPRoute{})
@@ -534,7 +539,7 @@ func TestRemoveOwnerReferenceOrDelete(t *testing.T) {
 			},
 		}
 		reconciler, fakeClient, _ := setupTestReconciler(t, obj)
-		err := reconciler.removeOwnerReferenceOrDelete(ctx, obj, types.UID("my-uid"))
+		err := reconciler.removeOwnerReference(ctx, obj, owner)
 		assert.NoError(t, err)
 
 		updated := &gatewayv1.HTTPRoute{}
