@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eladm/ingress2gateway-controller/pkg/config"
-	"github.com/eladm/ingress2gateway-controller/pkg/converter"
+	"github.com/eladmotola/ingress2gateway-controller/pkg/config"
+	"github.com/eladmotola/ingress2gateway-controller/pkg/converter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
