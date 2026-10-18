@@ -16,10 +16,10 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	"github.com/eladm/ingress2gateway-controller/pkg/config"
-	"github.com/eladm/ingress2gateway-controller/pkg/controller"
-	"github.com/eladm/ingress2gateway-controller/pkg/converter"
-	_ "github.com/eladm/ingress2gateway-controller/pkg/metrics" // Initialize metrics
+	"github.com/eladmotola/ingress2gateway-controller/pkg/config"
+	"github.com/eladmotola/ingress2gateway-controller/pkg/controller"
+	"github.com/eladmotola/ingress2gateway-controller/pkg/converter"
+	_ "github.com/eladmotola/ingress2gateway-controller/pkg/metrics" // Initialize metrics
 )
 
 var (

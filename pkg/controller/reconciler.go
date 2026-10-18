@@ -21,9 +21,9 @@ import (
 
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/notifications"
 
-	"github.com/eladm/ingress2gateway-controller/pkg/config"
-	"github.com/eladm/ingress2gateway-controller/pkg/converter"
-	custmetrics "github.com/eladm/ingress2gateway-controller/pkg/metrics"
+	"github.com/eladmotola/ingress2gateway-controller/pkg/config"
+	"github.com/eladmotola/ingress2gateway-controller/pkg/converter"
+	custmetrics "github.com/eladmotola/ingress2gateway-controller/pkg/metrics"
 )
 
 const (

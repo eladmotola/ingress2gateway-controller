@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/eladm/ingress2gateway-controller/pkg/config"
+	"github.com/eladmotola/ingress2gateway-controller/pkg/config"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw"
 	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitters/agentgateway"
 	_ "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitters/airlockmicrogateway"

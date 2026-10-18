@@ -1,6 +1,7 @@
 # Ingress2Gateway Controller
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/eladm/ingress2gateway-controller)](https://goreportcard.com/report/github.com/eladm/ingress2gateway-controller)
+[![Go Report Card](https://goreportcard.com/badge/github.com/eladmotola/ingress2gateway-controller)](https://goreportcard.com/report/github.com/eladmotola/ingress2gateway-controller)
+[![CI](https://github.com/eladmotola/ingress2gateway-controller/actions/workflows/lint-and-test.yaml/badge.svg)](https://github.com/eladmotola/ingress2gateway-controller/actions/workflows/lint-and-test.yaml)
 
 The `ingress2gateway-controller` is a Kubernetes operator that automatically and continuously converts standard **Ingress** resources into the modern **Gateway API** resources (`Gateway`, `HTTPRoute`, `GRPCRoute`, `TLSRoute`, and `BackendTLSPolicy`).
 

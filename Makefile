@@ -1,4 +1,4 @@
-.PHONY: help build run test docker-build deploy clean
+.PHONY: help build run test coverage docker-build deploy clean
 
 # Variables
 IMAGE_NAME ?= ingress2gateway-controller
@@ -18,6 +18,10 @@ run: ## Run the controller locally
 
 test: ## Run tests
 	go test -v ./...
+
+coverage: ## Run tests with coverage and print a summary
+	CGO_ENABLED=1 && go test -race -covermode=atomic -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
 
 fmt: ## Format code
 	go fmt ./...

@@ -4,12 +4,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eladm/ingress2gateway-controller/pkg/config"
-	"github.com/eladm/ingress2gateway-controller/pkg/converter"
+	"github.com/eladmotola/ingress2gateway-controller/pkg/config"
+	"github.com/eladmotola/ingress2gateway-controller/pkg/converter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -384,3 +385,168 @@ func TestReconciler_DeduplicateNotificationEvents(t *testing.T) {
 
 	assert.Equal(t, 0, len(fakeRecorder.Events), "Periodic resync should deduplicate and not re-emit duplicate events")
 }
+
+func TestFilterAnnotations(t *testing.T) {
+	assert.Nil(t, filterAnnotations(nil))
+
+	onlyTimestamp := map[string]string{
+		config.AnnotationConvertedAt: "2026-10-18T00:00:00Z",
+	}
+	assert.Nil(t, filterAnnotations(onlyTimestamp))
+
+	mixed := map[string]string{
+		config.AnnotationConvertedAt: "2026-10-18T00:00:00Z",
+		"other-key":                  "value",
+	}
+	filtered := filterAnnotations(mixed)
+	assert.Equal(t, map[string]string{"other-key": "value"}, filtered)
+}
+
+func TestIsResourceEqual_And_IsObjectEqual(t *testing.T) {
+	reconciler, _, _ := setupTestReconciler(t)
+
+	meta1 := metav1.ObjectMeta{
+		Name:      "gw",
+		Namespace: "default",
+		Labels:    map[string]string{"env": "test"},
+		Annotations: map[string]string{
+			config.AnnotationConvertedAt: "time-1",
+			"custom":                     "val",
+		},
+	}
+	meta2 := metav1.ObjectMeta{
+		Name:      "gw",
+		Namespace: "default",
+		Labels:    map[string]string{"env": "test"},
+		Annotations: map[string]string{
+			config.AnnotationConvertedAt: "time-2",
+			"custom":                     "val",
+		},
+	}
+
+	spec1 := gatewayv1.GatewaySpec{GatewayClassName: "nginx"}
+	spec2 := gatewayv1.GatewaySpec{GatewayClassName: "nginx"}
+	specDiff := gatewayv1.GatewaySpec{GatewayClassName: "other"}
+
+	// Equals ignoring timestamp
+	assert.True(t, reconciler.isResourceEqual(meta1, meta2, spec1, spec2))
+
+	// Spec differs
+	assert.False(t, reconciler.isResourceEqual(meta1, meta2, spec1, specDiff))
+
+	// Labels differ
+	metaDiffLabels := meta2
+	metaDiffLabels.Labels = map[string]string{"env": "prod"}
+	assert.False(t, reconciler.isResourceEqual(meta1, metaDiffLabels, spec1, spec2))
+
+	// OwnerReferences differ
+	metaDiffOwner := meta2
+	metaDiffOwner.OwnerReferences = []metav1.OwnerReference{{Name: "owner"}}
+	assert.False(t, reconciler.isResourceEqual(meta1, metaDiffOwner, spec1, spec2))
+
+	// Test isObjectEqual
+	obj1 := &gatewayv1.Gateway{ObjectMeta: meta1, Spec: spec1}
+	obj2 := &gatewayv1.Gateway{ObjectMeta: meta2, Spec: spec2}
+	assert.True(t, reconciler.isObjectEqual(obj1, obj2, obj1.Spec, obj2.Spec))
+}
+
+func TestCreateOrUpdateGateway_Conflict(t *testing.T) {
+	ctx := context.Background()
+	existingGw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "nginx",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "nginx",
+		},
+	}
+	reconciler, _, _ := setupTestReconciler(t, existingGw)
+
+	owner := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ing",
+			Namespace: "default",
+			UID:       "123",
+		},
+	}
+
+	conflictingGw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "nginx",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "conflicting-class",
+		},
+	}
+
+	err := reconciler.createOrUpdateGateway(ctx, conflictingGw, owner)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "conflict")
+}
+
+func TestRemoveOwnerReference(t *testing.T) {
+	ctx := context.Background()
+	owner := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			UID: "my-uid",
+		},
+	}
+
+	t.Run("owner not found", func(t *testing.T) {
+		reconciler, _, _ := setupTestReconciler(t)
+		obj := &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "route",
+				Namespace: "default",
+				OwnerReferences: []metav1.OwnerReference{
+					{UID: "other-uid"},
+				},
+			},
+		}
+		err := reconciler.removeOwnerReference(ctx, obj, owner)
+		assert.NoError(t, err)
+	})
+
+	t.Run("last owner deletes object", func(t *testing.T) {
+		obj := &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "route",
+				Namespace: "default",
+				OwnerReferences: []metav1.OwnerReference{
+					{UID: "my-uid"},
+				},
+			},
+		}
+		reconciler, fakeClient, _ := setupTestReconciler(t, obj)
+		err := reconciler.removeOwnerReference(ctx, obj, owner)
+		assert.NoError(t, err)
+
+		getErr := fakeClient.Get(ctx, client.ObjectKeyFromObject(obj), &gatewayv1.HTTPRoute{})
+		assert.True(t, apierrors.IsNotFound(getErr))
+	})
+
+	t.Run("multiple owners updates object", func(t *testing.T) {
+		obj := &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "route",
+				Namespace: "default",
+				OwnerReferences: []metav1.OwnerReference{
+					{UID: "my-uid"},
+					{UID: "keep-uid"},
+				},
+			},
+		}
+		reconciler, fakeClient, _ := setupTestReconciler(t, obj)
+		err := reconciler.removeOwnerReference(ctx, obj, owner)
+		assert.NoError(t, err)
+
+		updated := &gatewayv1.HTTPRoute{}
+		err = fakeClient.Get(ctx, client.ObjectKeyFromObject(obj), updated)
+		assert.NoError(t, err)
+		assert.Len(t, updated.OwnerReferences, 1)
+		assert.Equal(t, types.UID("keep-uid"), updated.OwnerReferences[0].UID)
+	})
+}
+
