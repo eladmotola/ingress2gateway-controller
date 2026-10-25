@@ -111,9 +111,13 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			return r.handleDeletion(ctx, &ingress)
 		}
 
+		hasUnmappedWarning := mode == config.IngressSelectionModeIngressClass &&
+			ingress.Annotations != nil &&
+			strings.ToLower(strings.TrimSpace(ingress.Annotations[config.AnnotationEnabled])) == "true"
+
 		// In ingressclass mode, if the user explicitly set enabled="true" but the class is not mapped,
 		// emit a Warning event to explain why it was skipped.
-		if mode == config.IngressSelectionModeIngressClass && ingress.Annotations != nil && strings.ToLower(strings.TrimSpace(ingress.Annotations[config.AnnotationEnabled])) == "true" {
+		if hasUnmappedWarning {
 			cls := config.GetIngressClass(&ingress)
 			msg := fmt.Sprintf("Ingress specifies %s: \"true\", but IngressClass %q is not in ingressClassToGatewayClassMapping or ingressClassToExternalGatewayMapping", config.AnnotationEnabled, cls)
 			ingressKey := client.ObjectKeyFromObject(&ingress)
@@ -130,7 +134,7 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		r.lastReport.Delete(ingressKey)
 		r.lastExternalGatewayMsg.Delete(ingressKey)
 		r.lastExternalGatewayNotFoundMsg.Delete(ingressKey)
-		if !(mode == config.IngressSelectionModeIngressClass && ingress.Annotations != nil && strings.ToLower(strings.TrimSpace(ingress.Annotations[config.AnnotationEnabled])) == "true") {
+		if !hasUnmappedWarning {
 			r.lastUnmappedWarningMsg.Delete(ingressKey)
 		}
 
