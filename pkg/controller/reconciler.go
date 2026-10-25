@@ -82,6 +82,10 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	var ingress networkingv1.Ingress
 	if err := r.Get(ctx, req.NamespacedName, &ingress); err != nil {
 		if errors.IsNotFound(err) {
+			r.lastReport.Delete(req.NamespacedName)
+			r.lastExternalGatewayMsg.Delete(req.NamespacedName)
+			r.lastExternalGatewayNotFoundMsg.Delete(req.NamespacedName)
+			r.lastUnmappedWarningMsg.Delete(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get Ingress")

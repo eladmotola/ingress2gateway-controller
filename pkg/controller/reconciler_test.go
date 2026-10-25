@@ -916,6 +916,25 @@ func TestReconcile_IngressSelectionMode(t *testing.T) {
 		event := <-fakeRecorder.Events
 		assert.Contains(t, event, "UnmappedIngressClass")
 		assert.Contains(t, event, "unmapped-class")
+
+		// Verify dedupe map contains the warning, but other maps are clean
+		_, ok := reconciler.lastUnmappedWarningMsg.Load(req.NamespacedName)
+		assert.True(t, ok, "lastUnmappedWarningMsg should contain entry")
+		_, ok = reconciler.lastReport.Load(req.NamespacedName)
+		assert.False(t, ok, "lastReport should be empty for unselected ingress")
+		_, ok = reconciler.lastExternalGatewayMsg.Load(req.NamespacedName)
+		assert.False(t, ok, "lastExternalGatewayMsg should be empty for unselected ingress")
+		_, ok = reconciler.lastExternalGatewayNotFoundMsg.Load(req.NamespacedName)
+		assert.False(t, ok, "lastExternalGatewayNotFoundMsg should be empty for unselected ingress")
+
+		// When deleted, the NotFound path clears lastUnmappedWarningMsg
+		err = fakeClient.Delete(ctx, ing)
+		require.NoError(t, err)
+		_, err = reconciler.Reconcile(ctx, req)
+		require.NoError(t, err)
+
+		_, ok = reconciler.lastUnmappedWarningMsg.Load(req.NamespacedName)
+		assert.False(t, ok, "lastUnmappedWarningMsg should be cleared on NotFound")
 	})
 
 	t.Run("ingressclass mode cleans up when ingress is no longer selected but has finalizer", func(t *testing.T) {
