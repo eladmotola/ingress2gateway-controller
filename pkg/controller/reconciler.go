@@ -122,6 +122,14 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			}
 		}
 
+		ingressKey := client.ObjectKeyFromObject(&ingress)
+		r.lastReport.Delete(ingressKey)
+		r.lastExternalGatewayMsg.Delete(ingressKey)
+		r.lastExternalGatewayNotFoundMsg.Delete(ingressKey)
+		if !(mode == config.IngressSelectionModeIngressClass && ingress.Annotations != nil && strings.ToLower(strings.TrimSpace(ingress.Annotations[config.AnnotationEnabled])) == "true") {
+			r.lastUnmappedWarningMsg.Delete(ingressKey)
+		}
+
 		logger.V(1).Info("Ingress not selected for conversion", "ingress", ingress.Name, "namespace", ingress.Namespace)
 		return ctrl.Result{}, nil
 	}
