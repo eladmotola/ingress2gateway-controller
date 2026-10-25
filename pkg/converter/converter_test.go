@@ -160,30 +160,29 @@ func TestConvert(t *testing.T) {
 		validateRoutes  func(t *testing.T, routes []*gatewayv1.HTTPRoute)
 		expectError     bool
 		errorContains   string
-	}{		{
-			name: "basic ingress conversion",
-			ingress: &networkingv1.Ingress{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ingress",
-					Namespace: "default",
-				},
-				Spec: networkingv1.IngressSpec{
-					IngressClassName: stringPtr("nginx"),
-					Rules: []networkingv1.IngressRule{
-						{
-							Host: "example.com",
-							IngressRuleValue: networkingv1.IngressRuleValue{
-								HTTP: &networkingv1.HTTPIngressRuleValue{
-									Paths: []networkingv1.HTTPIngressPath{
-										{
-											Path:     "/foo",
-											PathType: &pathTypePrefix,
-											Backend: networkingv1.IngressBackend{
-												Service: &networkingv1.IngressServiceBackend{
-													Name: "foo-service",
-													Port: networkingv1.ServiceBackendPort{
-														Number: 8080,
-													},
+	}{{
+		name: "basic ingress conversion",
+		ingress: &networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-ingress",
+				Namespace: "default",
+			},
+			Spec: networkingv1.IngressSpec{
+				IngressClassName: stringPtr("nginx"),
+				Rules: []networkingv1.IngressRule{
+					{
+						Host: "example.com",
+						IngressRuleValue: networkingv1.IngressRuleValue{
+							HTTP: &networkingv1.HTTPIngressRuleValue{
+								Paths: []networkingv1.HTTPIngressPath{
+									{
+										Path:     "/foo",
+										PathType: &pathTypePrefix,
+										Backend: networkingv1.IngressBackend{
+											Service: &networkingv1.IngressServiceBackend{
+												Name: "foo-service",
+												Port: networkingv1.ServiceBackendPort{
+													Number: 8080,
 												},
 											},
 										},
@@ -194,42 +193,43 @@ func TestConvert(t *testing.T) {
 					},
 				},
 			},
-			config: &config.Config{
-				GatewayName:      "nginx",
-				GatewayNamespace: "gateway-ns",
-				GatewayClass:     "my-gateway-class",
-				Provider:         "ingress-nginx",
-			},
-			expectedGateway: &gatewayv1.Gateway{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "nginx",
-					Namespace: "gateway-ns",
-				},
-				Spec: gatewayv1.GatewaySpec{
-					GatewayClassName: "my-gateway-class",
-				},
-			},
-			validateRoutes: func(t *testing.T, routes []*gatewayv1.HTTPRoute) {
-				require.Len(t, routes, 1)
-				route := routes[0]
-				assert.Equal(t, "default", route.Namespace)
-				assert.Equal(t, "example.com", string(route.Spec.Hostnames[0]))
-
-				require.Len(t, route.Spec.Rules, 1)
-				rule := route.Spec.Rules[0]
-
-				require.Len(t, rule.Matches, 1)
-				match := rule.Matches[0]
-				assert.Equal(t, "/foo", *match.Path.Value)
-				assert.Equal(t, gatewayv1.PathMatchPathPrefix, *match.Path.Type)
-
-				require.Len(t, rule.BackendRefs, 1)
-				backend := rule.BackendRefs[0]
-				assert.Equal(t, "foo-service", string(backend.Name))
-				assert.Equal(t, int32(8080), int32(*backend.Port))
-			},
-			expectError: false,
 		},
+		config: &config.Config{
+			GatewayName:      "nginx",
+			GatewayNamespace: "gateway-ns",
+			GatewayClass:     "my-gateway-class",
+			Provider:         "ingress-nginx",
+		},
+		expectedGateway: &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "nginx",
+				Namespace: "gateway-ns",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "my-gateway-class",
+			},
+		},
+		validateRoutes: func(t *testing.T, routes []*gatewayv1.HTTPRoute) {
+			require.Len(t, routes, 1)
+			route := routes[0]
+			assert.Equal(t, "default", route.Namespace)
+			assert.Equal(t, "example.com", string(route.Spec.Hostnames[0]))
+
+			require.Len(t, route.Spec.Rules, 1)
+			rule := route.Spec.Rules[0]
+
+			require.Len(t, rule.Matches, 1)
+			match := rule.Matches[0]
+			assert.Equal(t, "/foo", *match.Path.Value)
+			assert.Equal(t, gatewayv1.PathMatchPathPrefix, *match.Path.Type)
+
+			require.Len(t, rule.BackendRefs, 1)
+			backend := rule.BackendRefs[0]
+			assert.Equal(t, "foo-service", string(backend.Name))
+			assert.Equal(t, int32(8080), int32(*backend.Port))
+		},
+		expectError: false,
+	},
 		{
 			name: "ingress with no rules",
 			ingress: &networkingv1.Ingress{
@@ -411,11 +411,11 @@ func TestConvertBackendTLSPolicy(t *testing.T) {
 			Name:      "backend-tls",
 			Namespace: "default",
 			Annotations: map[string]string{
-				"nginx.ingress.kubernetes.io/backend-protocol":       "HTTPS",
-				"nginx.ingress.kubernetes.io/proxy-ssl-verify":       "on",
-				"nginx.ingress.kubernetes.io/proxy-ssl-secret":       "default/backend-ca",
-				"nginx.ingress.kubernetes.io/proxy-ssl-name":         "backend.example.com",
-				"nginx.ingress.kubernetes.io/proxy-ssl-server-name":  "on",
+				"nginx.ingress.kubernetes.io/backend-protocol":      "HTTPS",
+				"nginx.ingress.kubernetes.io/proxy-ssl-verify":      "on",
+				"nginx.ingress.kubernetes.io/proxy-ssl-secret":      "default/backend-ca",
+				"nginx.ingress.kubernetes.io/proxy-ssl-name":        "backend.example.com",
+				"nginx.ingress.kubernetes.io/proxy-ssl-server-name": "on",
 			},
 		},
 		Spec: networkingv1.IngressSpec{
@@ -868,5 +868,24 @@ func TestSetParentRef_AllRouteTypes(t *testing.T) {
 			require.NotNil(t, spec.ParentRefs[0].SectionName, "SectionName must be preserved for managed gateway")
 			assert.Equal(t, secName, *spec.ParentRefs[0].SectionName)
 		}
+	})
+
+	t.Run("managed gateway updates parentRefs to cfg.GatewayName and GatewayNamespace even if result.Gateway is nil", func(t *testing.T) {
+		c, _ := newTestConverter(t)
+		route := &gatewayv1.HTTPRoute{
+			Spec: gatewayv1.HTTPRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{
+						{Name: "emitter-default-gw"},
+					},
+				},
+			},
+		}
+
+		// When Convert runs with cfg.GatewayName and cfg.GatewayNamespace, setParentRef rewrites parentRefs
+		c.setParentRef(&route.Spec.CommonRouteSpec, "managed-target-gw", "managed-target-ns", false)
+		require.Len(t, route.Spec.ParentRefs, 1)
+		assert.Equal(t, gatewayv1.ObjectName("managed-target-gw"), route.Spec.ParentRefs[0].Name)
+		assert.Equal(t, gatewayv1.Namespace("managed-target-ns"), *route.Spec.ParentRefs[0].Namespace)
 	})
 }

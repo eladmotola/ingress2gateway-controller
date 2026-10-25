@@ -762,6 +762,11 @@ func TestReconcile_ExternalGateway_NotFound(t *testing.T) {
 		}
 	}
 	assert.True(t, foundWarning, "Expected Warning Event with reason ExternalGatewayNotFound")
+
+	// Reconcile again: verify ExternalGatewayNotFound warning is deduplicated
+	_, err = reconciler.Reconcile(ctx, req)
+	require.NoError(t, err)
+	assert.Empty(t, fakeRecorder.Events, "Warning event should be deduplicated on subsequent reconciles")
 }
 
 func TestCleanupManagedResources_ExternalGatewayNeverTouched(t *testing.T) {
@@ -810,8 +815,8 @@ func TestReconcile_IngressSelectionMode(t *testing.T) {
 	makeIngress := func(name, class, enabledAnn string) *networkingv1.Ingress {
 		ing := &networkingv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      name,
-				Namespace: "default",
+				Name:        name,
+				Namespace:   "default",
 				Annotations: map[string]string{},
 			},
 			Spec: networkingv1.IngressSpec{
@@ -894,7 +899,7 @@ func TestReconcile_IngressSelectionMode(t *testing.T) {
 
 	t.Run("ingressclass mode skips unmapped class even with enabled=true", func(t *testing.T) {
 		ing := makeIngress("ing-unmapped-enabled", "unmapped-class", "true")
-		reconciler, fakeClient, _ := setupTestReconciler(t, ing)
+		reconciler, fakeClient, fakeRecorder := setupTestReconciler(t, ing)
 		reconciler.IngressSelectionMode = config.IngressSelectionModeIngressClass
 
 		req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "ing-unmapped-enabled"}}
@@ -905,6 +910,12 @@ func TestReconcile_IngressSelectionMode(t *testing.T) {
 		err = fakeClient.Get(ctx, req.NamespacedName, checkIng)
 		require.NoError(t, err)
 		assert.False(t, controllerutil.ContainsFinalizer(checkIng, finalizerName), "Unmapped class with enabled=true must not receive finalizer")
+
+		// Verify warning event was emitted to clarify why it was skipped
+		require.NotEmpty(t, fakeRecorder.Events)
+		event := <-fakeRecorder.Events
+		assert.Contains(t, event, "UnmappedIngressClass")
+		assert.Contains(t, event, "unmapped-class")
 	})
 
 	t.Run("ingressclass mode cleans up when ingress is no longer selected but has finalizer", func(t *testing.T) {
@@ -951,4 +962,3 @@ func searchSubstr(s, substr string) bool {
 	}
 	return false
 }
-

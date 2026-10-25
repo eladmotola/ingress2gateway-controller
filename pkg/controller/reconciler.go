@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,6 +45,8 @@ type IngressReconciler struct {
 	IngressClassToExternalGatewayMapping map[string]config.ExternalGateway
 	lastReport                           sync.Map
 	lastExternalGatewayMsg               sync.Map
+	lastExternalGatewayNotFoundMsg       sync.Map
+	lastUnmappedWarningMsg               sync.Map
 }
 
 func (r *IngressReconciler) getSelectableClasses() []string {
@@ -103,9 +106,26 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			logger.Info("Ingress conversion disabled, cleaning up resources", "ingress", ingress.Name)
 			return r.handleDeletion(ctx, &ingress)
 		}
+
+		// In ingressclass mode, if the user explicitly set enabled="true" but the class is not mapped,
+		// emit a Warning event to explain why it was skipped.
+		if mode == config.IngressSelectionModeIngressClass && ingress.Annotations != nil && strings.ToLower(strings.TrimSpace(ingress.Annotations[config.AnnotationEnabled])) == "true" {
+			cls := config.GetIngressClass(&ingress)
+			msg := fmt.Sprintf("Ingress specifies %s: \"true\", but IngressClass %q is not in ingressClassToGatewayClassMapping or ingressClassToExternalGatewayMapping", config.AnnotationEnabled, cls)
+			ingressKey := client.ObjectKeyFromObject(&ingress)
+			if lastMsg, _ := r.lastUnmappedWarningMsg.Load(ingressKey); lastMsg != msg {
+				r.lastUnmappedWarningMsg.Store(ingressKey, msg)
+				logger.Info(msg, "ingress", ingress.Name, "namespace", ingress.Namespace)
+				if r.Recorder != nil {
+					r.Recorder.Event(&ingress, corev1.EventTypeWarning, "UnmappedIngressClass", msg)
+				}
+			}
+		}
+
 		logger.V(1).Info("Ingress not selected for conversion", "ingress", ingress.Name, "namespace", ingress.Namespace)
 		return ctrl.Result{}, nil
 	}
+	r.lastUnmappedWarningMsg.Delete(client.ObjectKeyFromObject(&ingress))
 
 	logger.Info("IngressClassToGatewayClassMapping", "mapping", r.IngressClassToGatewayClassMapping)
 	// Get and validate configuration
@@ -154,15 +174,21 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		var existingGW gatewayv1.Gateway
 		if err := r.Get(ctx, gwKey, &existingGW); err != nil {
 			if errors.IsNotFound(err) {
-				logger.Info("External Gateway not found", "gateway", gwKey.String())
-				if r.Recorder != nil {
-					r.Recorder.Eventf(&ingress, corev1.EventTypeWarning, "ExternalGatewayNotFound",
-						"External Gateway %s not found; routes will still be created but won't attach until the Gateway exists", gwKey.String())
+				msg := fmt.Sprintf("External Gateway %s not found; routes will still be created but won't attach until the Gateway exists", gwKey.String())
+				ingressKey := client.ObjectKeyFromObject(&ingress)
+				if lastMsg, _ := r.lastExternalGatewayNotFoundMsg.Load(ingressKey); lastMsg != msg {
+					r.lastExternalGatewayNotFoundMsg.Store(ingressKey, msg)
+					logger.Info("External Gateway not found", "gateway", gwKey.String())
+					if r.Recorder != nil {
+						r.Recorder.Event(&ingress, corev1.EventTypeWarning, "ExternalGatewayNotFound", msg)
+					}
 				}
 				requeueResult = ctrl.Result{RequeueAfter: 30 * time.Second}
 			} else {
 				logger.Info("Error checking external Gateway", "gateway", gwKey.String(), "error", err)
 			}
+		} else {
+			r.lastExternalGatewayNotFoundMsg.Delete(client.ObjectKeyFromObject(&ingress))
 		}
 	} else {
 		r.lastExternalGatewayMsg.Delete(client.ObjectKeyFromObject(&ingress))
@@ -328,6 +354,8 @@ func (r *IngressReconciler) handleDeletion(ctx context.Context, ingress *network
 
 	r.lastReport.Delete(client.ObjectKeyFromObject(ingress))
 	r.lastExternalGatewayMsg.Delete(client.ObjectKeyFromObject(ingress))
+	r.lastExternalGatewayNotFoundMsg.Delete(client.ObjectKeyFromObject(ingress))
+	r.lastUnmappedWarningMsg.Delete(client.ObjectKeyFromObject(ingress))
 	controllerutil.RemoveFinalizer(ingress, finalizerName)
 	if err := r.Update(ctx, ingress); err != nil {
 		return ctrl.Result{}, err
