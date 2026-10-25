@@ -228,8 +228,8 @@ func GetConfig(
 			cfg.Provider, ingress.Namespace, ingress.Name, GetSupportedProviders())
 	}
 
+	return cfg, nil
 }
-
 
 // AddSourceAnnotations adds tracking annotations to the created Gateway/HTTPRoute
 func AddSourceAnnotations(obj metav1.Object, ingress *networkingv1.Ingress, provider string) {
