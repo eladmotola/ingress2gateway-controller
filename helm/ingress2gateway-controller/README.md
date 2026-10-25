@@ -101,11 +101,35 @@ helm upgrade ingress2gateway-controller oci://ghcr.io/eladmotola/ingress2gateway
 |-----------|-------------|---------|
 | `controller.defaultProvider` | Default Ingress provider | `ingress-nginx` |
 | `controller.defaultEmitter` | Default emitter | `standard` |
+| `controller.ingressClassToExternalGatewayMapping` | Map of IngressClass to external Gateway (`namespace/name`) | `{}` |
 | `controller.ingressClassToGatewayClassMapping` | Map of IngressClass to GatewayClass | `{}` |
 
-### Mandatory Global Mapping
+### Selection Modes
 
-This configuration is **mandatory** in order to make the controller work. You must provide a global mapping in your `values.yaml`:
+*   **`annotation` (default)**: Only Ingresses with `ingress2gateway.io/enabled: "true"` are converted.
+*   **`ingressclass`**: Automatically selects any Ingress whose class matches an entry in `ingressClassToGatewayClassMapping` or `ingressClassToExternalGatewayMapping`. Ingresses without a matching class are ignored (even if `ingress2gateway.io/enabled: "true"` is set).
+*   In both modes, `ingress2gateway.io/enabled: "false"` can be used to explicitly opt out.
+
+> [!WARNING]
+> In `ingressclass` mode, every selected Ingress gets the controller's finalizer (`ingress2gateway.io/finalizer`). Deleting those Ingresses blocks while the controller is down.
+
+### External Gateways
+
+Use `controller.ingressClassToExternalGatewayMapping` to configure pre-existing Gateways that the controller should attach routes to without managing the Gateway itself:
+
+```yaml
+controller:
+  ingressSelectionMode: "ingressclass"
+  ingressClassToExternalGatewayMapping:
+    nginx-external: gateway-infra/my-gateway
+```
+
+> [!IMPORTANT]
+> The external Gateway's listeners must cover the required hostnames and allow routes from the Ingress namespaces via `allowedRoutes.namespaces`, otherwise routes will fail to attach.
+
+### Global Mapping for Managed Gateways
+
+When using managed Gateways, provide the mapping in your `values.yaml`:
 
 ```yaml
 controller:
@@ -113,8 +137,6 @@ controller:
     nginx-internal: nginx
     nginx-external: nginx
 ```
-
-With this mapping, any Ingress with `ingressClassName` (e.g. `nginx-internal` or `nginx-external`) and the annotation `ingress2gateway.io/enabled: "true"` will be automatically converted using `nginx` as the target GatewayClass.
 
 ## Uninstall Chart
 
