@@ -30,6 +30,8 @@ const (
 	AnnotationSourceIngress  = "ingress2gateway.io/source-ingress"
 	AnnotationSourceProvider = "ingress2gateway.io/source-provider"
 	AnnotationConvertedAt    = "ingress2gateway.io/converted-at"
+
+	LegacyIngressClassAnnotation = "kubernetes.io/ingress.class"
 )
 
 // ExternalGateway defines a pre-existing Gateway that the controller must not manage.
@@ -270,7 +272,7 @@ func GetIngressClass(ingress *networkingv1.Ingress) string {
 		return *ingress.Spec.IngressClassName
 	}
 	if ingress.Annotations != nil {
-		if class, ok := ingress.Annotations["kubernetes.io/ingress.class"]; ok && strings.TrimSpace(class) != "" {
+		if class, ok := ingress.Annotations[LegacyIngressClassAnnotation]; ok && strings.TrimSpace(class) != "" {
 			return strings.TrimSpace(class)
 		}
 	}
