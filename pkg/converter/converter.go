@@ -166,17 +166,19 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 	}
 
 	// Extract and fix up the Gateways
-	for _, gw := range gatewayResources.Gateways {
-		gw.Name = cfg.GatewayName
-		gw.Namespace = cfg.GatewayNamespace
-		gw.Spec.GatewayClassName = gatewayv1.ObjectName(cfg.GatewayClass)
-		result.Gateway = &gw
-		break // We support one managed Gateway per reconciliation group
+	if !cfg.ExternalGateway {
+		for _, gw := range gatewayResources.Gateways {
+			gw.Name = cfg.GatewayName
+			gw.Namespace = cfg.GatewayNamespace
+			gw.Spec.GatewayClassName = gatewayv1.ObjectName(cfg.GatewayClass)
+			result.Gateway = &gw
+			break // We support one managed Gateway per reconciliation group
+		}
 	}
 
 	// Fix up each HTTPRoute: ParentRefs and source annotations.
 	for _, route := range gatewayResources.HTTPRoutes {
-		c.setParentRef(&route.Spec.CommonRouteSpec, result.Gateway)
+		c.setParentRef(&route.Spec.CommonRouteSpec, cfg.GatewayName, cfg.GatewayNamespace, cfg.ExternalGateway)
 		srcIng := c.findSourceIngress(ingresses, route.Name)
 		if srcIng != nil {
 			config.AddSourceAnnotations(&route, srcIng, cfg.Provider)
@@ -188,7 +190,7 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 
 	// Fix up each GRPCRoute: ParentRefs and source annotations.
 	for _, route := range gatewayResources.GRPCRoutes {
-		c.setParentRef(&route.Spec.CommonRouteSpec, result.Gateway)
+		c.setParentRef(&route.Spec.CommonRouteSpec, cfg.GatewayName, cfg.GatewayNamespace, cfg.ExternalGateway)
 		srcIng := c.findSourceIngress(ingresses, route.Name)
 		if srcIng != nil {
 			config.AddSourceAnnotations(&route, srcIng, cfg.Provider)
@@ -200,7 +202,7 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 
 	// Fix up each TLSRoute: ParentRefs and source annotations.
 	for _, route := range gatewayResources.TLSRoutes {
-		c.setParentRef(&route.Spec.CommonRouteSpec, result.Gateway)
+		c.setParentRef(&route.Spec.CommonRouteSpec, cfg.GatewayName, cfg.GatewayNamespace, cfg.ExternalGateway)
 		srcIng := c.findSourceIngress(ingresses, route.Name)
 		if srcIng != nil {
 			config.AddSourceAnnotations(&route, srcIng, cfg.Provider)
@@ -243,17 +245,19 @@ func (c *Converter) Convert(ctx context.Context, ingresses []networkingv1.Ingres
 	return result, nil
 }
 
-// setParentRef ensures the route points to our generated Gateway while preserving listener sectionName if present.
-func (c *Converter) setParentRef(spec *gatewayv1.CommonRouteSpec, gateway *gatewayv1.Gateway) {
-	if gateway == nil {
+// setParentRef ensures the route points to the target Gateway while preserving listener sectionName if present for non-external gateways.
+// For external gateways, ParentRefs are set to just name+namespace and sectionName is dropped.
+func (c *Converter) setParentRef(spec *gatewayv1.CommonRouteSpec, gatewayName, gatewayNamespace string, externalGateway bool) {
+	if gatewayName == "" {
 		return
 	}
-	ns := gatewayv1.Namespace(gateway.Namespace)
+	ns := gatewayv1.Namespace(gatewayNamespace)
+	gwName := gatewayv1.ObjectName(gatewayName)
 
 	if len(spec.ParentRefs) == 0 {
 		spec.ParentRefs = []gatewayv1.ParentReference{
 			{
-				Name:      gatewayv1.ObjectName(gateway.Name),
+				Name:      gwName,
 				Namespace: &ns,
 			},
 		}
@@ -261,8 +265,29 @@ func (c *Converter) setParentRef(spec *gatewayv1.CommonRouteSpec, gateway *gatew
 	}
 
 	for i := range spec.ParentRefs {
-		spec.ParentRefs[i].Name = gatewayv1.ObjectName(gateway.Name)
+		spec.ParentRefs[i].Name = gwName
 		spec.ParentRefs[i].Namespace = &ns
+		if externalGateway {
+			spec.ParentRefs[i].SectionName = nil
+		}
+	}
+
+	if externalGateway {
+		// Deduplicate parentRefs if dropping sectionName resulted in duplicates
+		uniqueRefs := make([]gatewayv1.ParentReference, 0, len(spec.ParentRefs))
+		seen := make(map[string]bool)
+		for _, ref := range spec.ParentRefs {
+			nsStr := ""
+			if ref.Namespace != nil {
+				nsStr = string(*ref.Namespace)
+			}
+			key := fmt.Sprintf("%s/%s", nsStr, ref.Name)
+			if !seen[key] {
+				seen[key] = true
+				uniqueRefs = append(uniqueRefs, ref)
+			}
+		}
+		spec.ParentRefs = uniqueRefs
 	}
 }
 

@@ -44,6 +44,14 @@ spec:
             {{- if .Values.controller.defaultEmitter }}
             - --emitter={{ .Values.controller.defaultEmitter }}
             {{- end }}
+            {{- if .Values.controller.ingressSelectionMode }}
+            - --ingress-selection-mode={{ .Values.controller.ingressSelectionMode }}
+            {{- end }}
+            {{- if .Values.controller.ingressClassToExternalGatewayMapping }}
+            {{- range $class, $gw := .Values.controller.ingressClassToExternalGatewayMapping }}
+            - --ingress-class-to-external-gateway-mapping={{ printf "%s=%s" $class $gw }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.controller.ingressClassToGatewayClassMapping }}
             {{- range $class, $gw := .Values.controller.ingressClassToGatewayClassMapping }}
             - --ingress-class-to-gateway-class-mapping={{ printf "%s=%s" $class $gw }}

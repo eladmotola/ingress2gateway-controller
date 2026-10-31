@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -33,13 +35,42 @@ const (
 // IngressReconciler reconciles Ingress resources
 type IngressReconciler struct {
 	client.Client
-	Scheme                            *runtime.Scheme
-	Recorder                          record.EventRecorder
-	Converter                         *converter.Converter
-	DefaultProvider                   string
-	DefaultEmitter                    string
-	IngressClassToGatewayClassMapping map[string]string
-	lastReport                        sync.Map
+	Scheme                               *runtime.Scheme
+	Recorder                             record.EventRecorder
+	Converter                            *converter.Converter
+	DefaultProvider                      string
+	DefaultEmitter                       string
+	IngressSelectionMode                 string
+	IngressClassToGatewayClassMapping    map[string]string
+	IngressClassToExternalGatewayMapping map[string]config.ExternalGateway
+	lastReport                           sync.Map
+	lastExternalGatewayMsg               sync.Map
+	lastExternalGatewayNotFoundMsg       sync.Map
+	lastUnmappedWarningMsg               sync.Map
+}
+
+func (r *IngressReconciler) getSelectableClasses() []string {
+	classMap := make(map[string]bool)
+	for k := range r.IngressClassToGatewayClassMapping {
+		classMap[k] = true
+	}
+	for k := range r.IngressClassToExternalGatewayMapping {
+		classMap[k] = true
+	}
+	classes := make([]string, 0, len(classMap))
+	for k := range classMap {
+		classes = append(classes, k)
+	}
+	return classes
+}
+
+func (r *IngressReconciler) isExternalGateway(namespace, name string) bool {
+	for _, eg := range r.IngressClassToExternalGatewayMapping {
+		if eg.Namespace == namespace && eg.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Reconcile handles the reconciliation of Ingress resources
@@ -51,6 +82,10 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	var ingress networkingv1.Ingress
 	if err := r.Get(ctx, req.NamespacedName, &ingress); err != nil {
 		if errors.IsNotFound(err) {
+			r.lastReport.Delete(req.NamespacedName)
+			r.lastExternalGatewayMsg.Delete(req.NamespacedName)
+			r.lastExternalGatewayNotFoundMsg.Delete(req.NamespacedName)
+			r.lastUnmappedWarningMsg.Delete(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get Ingress")
@@ -63,19 +98,54 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Check if conversion is enabled
-	if !config.IsEnabled(&ingress) {
+	classes := r.getSelectableClasses()
+	mode := r.IngressSelectionMode
+	if mode == "" {
+		mode = config.IngressSelectionModeAnnotation
+	}
+	if !config.IsEnabled(&ingress, mode, classes) {
 		// If it's disabled but still has our finalizer, it means it was previously enabled.
 		// We should clean up resources before removing the finalizer.
 		if controllerutil.ContainsFinalizer(&ingress, finalizerName) {
 			logger.Info("Ingress conversion disabled, cleaning up resources", "ingress", ingress.Name)
 			return r.handleDeletion(ctx, &ingress)
 		}
+
+		hasUnmappedWarning := mode == config.IngressSelectionModeIngressClass &&
+			ingress.Annotations != nil &&
+			strings.ToLower(strings.TrimSpace(ingress.Annotations[config.AnnotationEnabled])) == "true"
+
+		// In ingressclass mode, if the user explicitly set enabled="true" but the class is not mapped,
+		// emit a Warning event to explain why it was skipped.
+		if hasUnmappedWarning {
+			cls := config.GetIngressClass(&ingress)
+			msg := fmt.Sprintf("Ingress specifies %s: \"true\", but IngressClass %q is not in ingressClassToGatewayClassMapping or ingressClassToExternalGatewayMapping", config.AnnotationEnabled, cls)
+			ingressKey := client.ObjectKeyFromObject(&ingress)
+			if lastMsg, _ := r.lastUnmappedWarningMsg.Load(ingressKey); lastMsg != msg {
+				r.lastUnmappedWarningMsg.Store(ingressKey, msg)
+				logger.Info(msg, "ingress", ingress.Name, "namespace", ingress.Namespace)
+				if r.Recorder != nil {
+					r.Recorder.Event(&ingress, corev1.EventTypeWarning, "UnmappedIngressClass", msg)
+				}
+			}
+		}
+
+		ingressKey := client.ObjectKeyFromObject(&ingress)
+		r.lastReport.Delete(ingressKey)
+		r.lastExternalGatewayMsg.Delete(ingressKey)
+		r.lastExternalGatewayNotFoundMsg.Delete(ingressKey)
+		if !hasUnmappedWarning {
+			r.lastUnmappedWarningMsg.Delete(ingressKey)
+		}
+
+		logger.V(1).Info("Ingress not selected for conversion", "ingress", ingress.Name, "namespace", ingress.Namespace)
 		return ctrl.Result{}, nil
 	}
+	r.lastUnmappedWarningMsg.Delete(client.ObjectKeyFromObject(&ingress))
 
 	logger.Info("IngressClassToGatewayClassMapping", "mapping", r.IngressClassToGatewayClassMapping)
 	// Get and validate configuration
-	cfg, err := config.GetConfig(&ingress, r.DefaultProvider, r.DefaultEmitter, r.IngressClassToGatewayClassMapping)
+	cfg, err := config.GetConfig(&ingress, r.DefaultProvider, r.DefaultEmitter, r.IngressClassToGatewayClassMapping, r.IngressClassToExternalGatewayMapping)
 	if err != nil {
 		logger.Error(err, "Invalid configuration", "ingress", ingress.Name)
 		custmetrics.ConversionErrorsTotal.WithLabelValues("unknown", "invalid_config").Inc()
@@ -95,31 +165,77 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	// Find all Ingresses that target the SAME Gateway (merged conversion)
-	// We list cluster-wide because a shared Gateway can be targeted by Ingresses in multiple namespaces.
-	var ingressList networkingv1.IngressList
-	if err := r.List(ctx, &ingressList); err != nil {
-		logger.Error(err, "Failed to list cluster-wide Ingresses for merged conversion")
-		return ctrl.Result{}, err
+	var requeueResult ctrl.Result
+	var ingressesToConvert []networkingv1.Ingress
+
+	if cfg.ExternalGateway {
+		// For external gateways: convert ONLY the reconciled Ingress, skipping the cluster-wide merge list.
+		ingressesToConvert = []networkingv1.Ingress{ingress}
+
+		msg := fmt.Sprintf("Gateway %s/%s is listed in externalGateways; not creating or updating it. Trusting it to provide listeners/hostnames and allowedRoutes for this Ingress's routes.",
+			cfg.GatewayNamespace, cfg.GatewayName)
+		ingressKey := client.ObjectKeyFromObject(&ingress)
+		lastMsg, _ := r.lastExternalGatewayMsg.Load(ingressKey)
+		if lastMsg != msg {
+			r.lastExternalGatewayMsg.Store(ingressKey, msg)
+			logger.Info(msg, "ingress", ingress.Name, "namespace", ingress.Namespace)
+			if r.Recorder != nil {
+				r.Recorder.Event(&ingress, corev1.EventTypeNormal, "ExternalGateway", msg)
+			}
+		}
+
+		// Best-effort read-only r.Get of the Gateway: if NotFound, Warning Event + log + requeue after 30s,
+		// but still create the routes. This check must never fail the reconcile.
+		gwKey := types.NamespacedName{Namespace: cfg.GatewayNamespace, Name: cfg.GatewayName}
+		var existingGW gatewayv1.Gateway
+		if err := r.Get(ctx, gwKey, &existingGW); err != nil {
+			if errors.IsNotFound(err) {
+				msg := fmt.Sprintf("External Gateway %s not found; routes will still be created but won't attach until the Gateway exists", gwKey.String())
+				ingressKey := client.ObjectKeyFromObject(&ingress)
+				if lastMsg, _ := r.lastExternalGatewayNotFoundMsg.Load(ingressKey); lastMsg != msg {
+					r.lastExternalGatewayNotFoundMsg.Store(ingressKey, msg)
+					logger.Info("External Gateway not found", "gateway", gwKey.String())
+					if r.Recorder != nil {
+						r.Recorder.Event(&ingress, corev1.EventTypeWarning, "ExternalGatewayNotFound", msg)
+					}
+				}
+				requeueResult = ctrl.Result{RequeueAfter: 30 * time.Second}
+			} else {
+				logger.Info("Error checking external Gateway", "gateway", gwKey.String(), "error", err)
+			}
+		} else {
+			r.lastExternalGatewayNotFoundMsg.Delete(client.ObjectKeyFromObject(&ingress))
+		}
+	} else {
+		r.lastExternalGatewayMsg.Delete(client.ObjectKeyFromObject(&ingress))
+
+		// Find all Ingresses that target the SAME Gateway (merged conversion)
+		// We list cluster-wide because a shared Gateway can be targeted by Ingresses in multiple namespaces.
+		var ingressList networkingv1.IngressList
+		if err := r.List(ctx, &ingressList); err != nil {
+			logger.Error(err, "Failed to list cluster-wide Ingresses for merged conversion")
+			return ctrl.Result{}, err
+		}
+
+		var sharedIngresses []networkingv1.Ingress
+		for _, ing := range ingressList.Items {
+			if !config.IsEnabled(&ing, mode, classes) {
+				continue
+			}
+			ingCfg, err := config.GetConfig(&ing, r.DefaultProvider, r.DefaultEmitter, r.IngressClassToGatewayClassMapping, r.IngressClassToExternalGatewayMapping)
+			if err != nil {
+				continue
+			}
+			// If it targets the same Gateway (Name and Namespace), it must be included in the merge.
+			if !ingCfg.ExternalGateway && ingCfg.GatewayName == cfg.GatewayName && ingCfg.GatewayNamespace == cfg.GatewayNamespace {
+				sharedIngresses = append(sharedIngresses, ing)
+			}
+		}
+		ingressesToConvert = sharedIngresses
 	}
 
-	var sharedIngresses []networkingv1.Ingress
-	for _, ing := range ingressList.Items {
-		if !config.IsEnabled(&ing) {
-			continue
-		}
-		ingCfg, err := config.GetConfig(&ing, r.DefaultProvider, r.DefaultEmitter, r.IngressClassToGatewayClassMapping)
-		if err != nil {
-			continue
-		}
-		// If it targets the same Gateway (Name and Namespace), it must be included in the merge.
-		if ingCfg.GatewayName == cfg.GatewayName && ingCfg.GatewayNamespace == cfg.GatewayNamespace {
-			sharedIngresses = append(sharedIngresses, ing)
-		}
-	}
-
-	// Perform conversion with all shared Ingresses
-	result, err := r.Converter.Convert(ctx, sharedIngresses, cfg)
+	// Perform conversion
+	result, err := r.Converter.Convert(ctx, ingressesToConvert, cfg)
 	if err != nil {
 		logger.Error(err, "Conversion failed", "ingress", ingress.Name)
 		custmetrics.ConversionErrorsTotal.WithLabelValues(cfg.Provider, "conversion_failed").Inc()
@@ -157,8 +273,8 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	// Update Gateway if needed
-	if result.Gateway != nil {
+	// Update Gateway if needed (never for external gateways)
+	if !cfg.ExternalGateway && result.Gateway != nil {
 		if err := r.createOrUpdateGateway(ctx, result.Gateway, &ingress); err != nil {
 			logger.Error(err, "Failed to create/update Gateway")
 			custmetrics.ConversionErrorsTotal.WithLabelValues(cfg.Provider, "gateway_creation_failed").Inc()
@@ -170,9 +286,9 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	findOwner := func(obj client.Object) *networkingv1.Ingress {
 		if ann := obj.GetAnnotations(); ann != nil {
 			if src := ann[config.AnnotationSourceIngress]; src != "" {
-				for i := range sharedIngresses {
-					if fmt.Sprintf("%s/%s", sharedIngresses[i].Namespace, sharedIngresses[i].Name) == src {
-						return &sharedIngresses[i]
+				for i := range ingressesToConvert {
+					if fmt.Sprintf("%s/%s", ingressesToConvert[i].Namespace, ingressesToConvert[i].Name) == src {
+						return &ingressesToConvert[i]
 					}
 				}
 			}
@@ -233,7 +349,7 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		"ingress", ingress.Name,
 		"duration", duration)
 
-	return ctrl.Result{}, nil
+	return requeueResult, nil
 }
 
 // handleDeletion handles cleanup when Ingress is deleted or conversion is disabled
@@ -253,6 +369,9 @@ func (r *IngressReconciler) handleDeletion(ctx context.Context, ingress *network
 	}
 
 	r.lastReport.Delete(client.ObjectKeyFromObject(ingress))
+	r.lastExternalGatewayMsg.Delete(client.ObjectKeyFromObject(ingress))
+	r.lastExternalGatewayNotFoundMsg.Delete(client.ObjectKeyFromObject(ingress))
+	r.lastUnmappedWarningMsg.Delete(client.ObjectKeyFromObject(ingress))
 	controllerutil.RemoveFinalizer(ingress, finalizerName)
 	if err := r.Update(ctx, ingress); err != nil {
 		return ctrl.Result{}, err
@@ -275,9 +394,13 @@ func (r *IngressReconciler) cleanupManagedResources(ctx context.Context, ingress
 	// 2. Clean up Gateway owner reference
 	// Gateways are shared. If we just delete it based on an annotation, we might break other Ingresses.
 	// We find any Gateway that has this specific Ingress listed as an OwnerReference.
+	// External Gateways are never managed or deleted.
 	gateways := &gatewayv1.GatewayList{}
 	if err := r.List(ctx, gateways); err == nil {
 		for _, gw := range gateways.Items {
+			if r.isExternalGateway(gw.Namespace, gw.Name) {
+				continue
+			}
 			// Check if this Ingress is an owner
 			isOwner := false
 			for _, ref := range gw.GetOwnerReferences() {

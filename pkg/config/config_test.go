@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -11,13 +12,15 @@ import (
 
 func TestGetConfig(t *testing.T) {
 	tests := []struct {
-		name            string
-		ingress         *networkingv1.Ingress
-		defaultProvider string
-		defaultEmitter  string
-		classMapping    map[string]string
-		want            *Config
-		wantErr         bool
+		name             string
+		ingress          *networkingv1.Ingress
+		defaultProvider  string
+		defaultEmitter   string
+		classMapping     map[string]string
+		externalGateways map[string]ExternalGateway
+		want             *Config
+		wantErr          bool
+		errContains      string
 	}{
 		{
 			name: "valid mapping with enabled annotation",
@@ -43,6 +46,7 @@ func TestGetConfig(t *testing.T) {
 				GatewayClass:     "nginx",
 				GatewayNamespace: "default",
 				Emitter:          DefaultEmitterName,
+				ExternalGateway:  false,
 			},
 			wantErr: false,
 		},
@@ -59,6 +63,7 @@ func TestGetConfig(t *testing.T) {
 			},
 			classMapping: map[string]string{"nginx": "nginx"},
 			wantErr:      true,
+			errContains:  "must have an ingressClassName",
 		},
 		{
 			name: "empty IngressClassName",
@@ -76,9 +81,10 @@ func TestGetConfig(t *testing.T) {
 			},
 			classMapping: map[string]string{"nginx": "nginx"},
 			wantErr:      true,
+			errContains:  "must have an ingressClassName",
 		},
 		{
-			name: "IngressClass not in mapping",
+			name: "IngressClass not in mapping (managed)",
 			ingress: &networkingv1.Ingress{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ingress",
@@ -91,8 +97,170 @@ func TestGetConfig(t *testing.T) {
 					IngressClassName: ptr.To("unknown-class"),
 				},
 			},
-			classMapping: map[string]string{"nginx": "nginx"},
-			wantErr:      true,
+			defaultProvider: "ingress-nginx",
+			classMapping:    map[string]string{"nginx": "nginx"},
+			wantErr:         true,
+			errContains:     "not in the global mapping",
+		},
+		{
+			name: "external by class - unmapped class is not an error",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-ingress",
+					Namespace: "app-ns",
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("external-class"),
+				},
+			},
+			defaultProvider: "ingress-nginx",
+			classMapping:    map[string]string{"other-class": "other"},
+			externalGateways: map[string]ExternalGateway{
+				"external-class": {
+					Name:      "my-ext-gw",
+					Namespace: "infra-ns",
+				},
+			},
+			want: &Config{
+				Provider:         "ingress-nginx",
+				GatewayName:      "my-ext-gw",
+				GatewayNamespace: "infra-ns",
+				GatewayClass:     "",
+				Emitter:          DefaultEmitterName,
+				ExternalGateway:  true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "external gateway mapped by ingressClass",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-ingress",
+					Namespace: "app-ns",
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("shared-gw"),
+				},
+			},
+			defaultProvider: "ingress-nginx",
+			externalGateways: map[string]ExternalGateway{
+				"shared-gw": {
+					Name:      "shared-gw",
+					Namespace: "shared-infra",
+				},
+			},
+			want: &Config{
+				Provider:         "ingress-nginx",
+				GatewayName:      "shared-gw",
+				GatewayNamespace: "shared-infra",
+				Emitter:          DefaultEmitterName,
+				ExternalGateway:  true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "nil annotations for external gateway",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-ingress",
+					Namespace: "app-ns",
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("ext-class"),
+				},
+			},
+			defaultProvider: "ingress-nginx",
+			externalGateways: map[string]ExternalGateway{
+				"ext-class": {
+					Name:      "ext-gw",
+					Namespace: "infra-ns",
+				},
+			},
+			want: &Config{
+				Provider:         "ingress-nginx",
+				GatewayName:      "ext-gw",
+				GatewayNamespace: "infra-ns",
+				Emitter:          DefaultEmitterName,
+				ExternalGateway:  true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "nil annotations for managed gateway with default provider",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-ingress",
+					Namespace: "default",
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("nginx-internal"),
+				},
+			},
+			defaultProvider: "ingress-nginx",
+			classMapping: map[string]string{
+				"nginx-internal": "nginx",
+			},
+			want: &Config{
+				Provider:         "ingress-nginx",
+				GatewayName:      "nginx-internal",
+				GatewayClass:     "nginx",
+				GatewayNamespace: "default",
+				Emitter:          DefaultEmitterName,
+				ExternalGateway:  false,
+			},
+			wantErr: false,
+		},
+		{
+			name: "legacy class annotation for managed gateway",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-legacy",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"kubernetes.io/ingress.class": "legacy-nginx",
+					},
+				},
+			},
+			defaultProvider: "ingress-nginx",
+			classMapping: map[string]string{
+				"legacy-nginx": "nginx",
+			},
+			want: &Config{
+				Provider:         "ingress-nginx",
+				GatewayName:      "legacy-nginx",
+				GatewayClass:     "nginx",
+				GatewayNamespace: "default",
+				Emitter:          DefaultEmitterName,
+				ExternalGateway:  false,
+			},
+			wantErr: false,
+		},
+		{
+			name: "legacy class annotation for external gateway",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-legacy",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"kubernetes.io/ingress.class": "legacy-ext",
+					},
+				},
+			},
+			defaultProvider: "ingress-nginx",
+			externalGateways: map[string]ExternalGateway{
+				"legacy-ext": {
+					Name:      "ext-gw",
+					Namespace: "infra",
+				},
+			},
+			want: &Config{
+				Provider:         "ingress-nginx",
+				GatewayName:      "ext-gw",
+				GatewayNamespace: "infra",
+				Emitter:          DefaultEmitterName,
+				ExternalGateway:  true,
+			},
+			wantErr: false,
 		},
 		{
 			name: "valid mapping with traefik provider",
@@ -118,6 +286,7 @@ func TestGetConfig(t *testing.T) {
 				GatewayClass:     "traefik",
 				GatewayNamespace: "default",
 				Emitter:          DefaultEmitterName,
+				ExternalGateway:  false,
 			},
 			wantErr: false,
 		},
@@ -125,40 +294,230 @@ func TestGetConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := GetConfig(tt.ingress, tt.defaultProvider, tt.defaultEmitter, tt.classMapping)
+			got, err := GetConfig(tt.ingress, tt.defaultProvider, tt.defaultEmitter, tt.classMapping, tt.externalGateways)
 			if tt.wantErr {
-				assert.Error(t, err)
+				require.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
 				return
 			}
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 func TestIsEnabled(t *testing.T) {
-	assert.False(t, IsEnabled(nil))
-	assert.False(t, IsEnabled(&networkingv1.Ingress{}))
-	assert.False(t, IsEnabled(&networkingv1.Ingress{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{AnnotationEnabled: "false"},
+	classes := []string{"nginx-internal", "nginx-external"}
+
+	tests := []struct {
+		name       string
+		ingress    *networkingv1.Ingress
+		mode       string
+		classes    []string
+		wantResult bool
+	}{
+		{
+			name:       "nil ingress",
+			ingress:    nil,
+			mode:       IngressSelectionModeAnnotation,
+			classes:    classes,
+			wantResult: false,
 		},
-	}))
-	assert.False(t, IsEnabled(&networkingv1.Ingress{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{AnnotationEnabled: "random"},
+		{
+			name:       "empty ingress in annotation mode",
+			ingress:    &networkingv1.Ingress{},
+			mode:       IngressSelectionModeAnnotation,
+			classes:    classes,
+			wantResult: false,
 		},
-	}))
-	assert.True(t, IsEnabled(&networkingv1.Ingress{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{AnnotationEnabled: "true"},
+		{
+			name: "annotation mode with enabled=true (spec class)",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{AnnotationEnabled: "true"},
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("nginx-internal"),
+				},
+			},
+			mode:       IngressSelectionModeAnnotation,
+			classes:    classes,
+			wantResult: true,
 		},
-	}))
-	assert.True(t, IsEnabled(&networkingv1.Ingress{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{AnnotationEnabled: "TRUE"},
+		{
+			name: "annotation mode with enabled=TRUE (legacy annotation class)",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						AnnotationEnabled:             "TRUE",
+						"kubernetes.io/ingress.class": "nginx-internal",
+					},
+				},
+			},
+			mode:       IngressSelectionModeAnnotation,
+			classes:    classes,
+			wantResult: true,
 		},
-	}))
+		{
+			name: "annotation mode with enabled=false (spec class in classes)",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{AnnotationEnabled: "false"},
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("nginx-internal"),
+				},
+			},
+			mode:       IngressSelectionModeAnnotation,
+			classes:    classes,
+			wantResult: false,
+		},
+		{
+			name: "annotation mode without enabled annotation (spec class in classes)",
+			ingress: &networkingv1.Ingress{
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("nginx-internal"),
+				},
+			},
+			mode:       IngressSelectionModeAnnotation,
+			classes:    classes,
+			wantResult: false,
+		},
+		{
+			name: "annotation mode enabled=true but class not in classes",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{AnnotationEnabled: "true"},
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("unrelated-class"),
+				},
+			},
+			mode:       IngressSelectionModeAnnotation,
+			classes:    classes,
+			wantResult: true,
+		},
+		{
+			name: "ingressclass mode with spec class in classes (no enabled annotation)",
+			ingress: &networkingv1.Ingress{
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("nginx-internal"),
+				},
+			},
+			mode:       IngressSelectionModeIngressClass,
+			classes:    classes,
+			wantResult: true,
+		},
+		{
+			name: "ingressclass mode with legacy annotation class in classes (no enabled annotation)",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"kubernetes.io/ingress.class": "nginx-external",
+					},
+				},
+			},
+			mode:       IngressSelectionModeIngressClass,
+			classes:    classes,
+			wantResult: true,
+		},
+		{
+			name: "ingressclass mode with class NOT in classes",
+			ingress: &networkingv1.Ingress{
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("other-class"),
+				},
+			},
+			mode:       IngressSelectionModeIngressClass,
+			classes:    classes,
+			wantResult: false,
+		},
+		{
+			name: "ingressclass mode with class in classes but enabled=false (opts out)",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{AnnotationEnabled: "false"},
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("nginx-internal"),
+				},
+			},
+			mode:       IngressSelectionModeIngressClass,
+			classes:    classes,
+			wantResult: false,
+		},
+		{
+			name: "ingressclass mode with class in classes but enabled=FALSE (opts out)",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{AnnotationEnabled: "FALSE"},
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("nginx-internal"),
+				},
+			},
+			mode:       IngressSelectionModeIngressClass,
+			classes:    classes,
+			wantResult: false,
+		},
+		{
+			name: "ingressclass mode with class NOT in classes even if enabled=true (not selected)",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{AnnotationEnabled: "true"},
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("unrelated-class"),
+				},
+			},
+			mode:       IngressSelectionModeIngressClass,
+			classes:    classes,
+			wantResult: false,
+		},
+		{
+			name: "ingressclass mode with class in classes and enabled=true",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{AnnotationEnabled: "true"},
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("nginx-internal"),
+				},
+			},
+			mode:       IngressSelectionModeIngressClass,
+			classes:    classes,
+			wantResult: true,
+		},
+		{
+			name: "ingressclass mode with no class and no enabled annotation",
+			ingress: &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{},
+			},
+			mode:       IngressSelectionModeIngressClass,
+			classes:    classes,
+			wantResult: false,
+		},
+		{
+			name: "default mode (empty string) acts as annotation mode",
+			ingress: &networkingv1.Ingress{
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: ptr.To("nginx-internal"),
+				},
+			},
+			mode:       "",
+			classes:    classes,
+			wantResult: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsEnabled(tt.ingress, tt.mode, tt.classes)
+			assert.Equal(t, tt.wantResult, got)
+		})
+	}
 }
 
 func TestGetConfig_Additional(t *testing.T) {
@@ -167,12 +526,12 @@ func TestGetConfig_Additional(t *testing.T) {
 	}
 
 	t.Run("nil ingress", func(t *testing.T) {
-		cfg, err := GetConfig(nil, "nginx", "", mapping)
+		cfg, err := GetConfig(nil, "nginx", "", mapping, nil)
 		assert.Error(t, err)
 		assert.Nil(t, cfg)
 	})
 
-	t.Run("nil annotations", func(t *testing.T) {
+	t.Run("nil annotations does not error if class and provider valid", func(t *testing.T) {
 		ing := &networkingv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -182,9 +541,12 @@ func TestGetConfig_Additional(t *testing.T) {
 				IngressClassName: ptr.To("nginx-class"),
 			},
 		}
-		cfg, err := GetConfig(ing, "nginx", "", mapping)
-		assert.Error(t, err)
-		assert.Nil(t, cfg)
+		cfg, err := GetConfig(ing, "nginx", "", mapping, nil)
+		assert.NoError(t, err)
+		require.NotNil(t, cfg)
+		assert.Equal(t, "nginx", cfg.Provider)
+		assert.Equal(t, "nginx-class", cfg.GatewayName)
+		assert.Equal(t, "default", cfg.GatewayNamespace)
 	})
 
 	t.Run("missing provider", func(t *testing.T) {
@@ -198,7 +560,7 @@ func TestGetConfig_Additional(t *testing.T) {
 				IngressClassName: ptr.To("nginx-class"),
 			},
 		}
-		cfg, err := GetConfig(ing, "", "", mapping)
+		cfg, err := GetConfig(ing, "", "", mapping, nil)
 		assert.Error(t, err)
 		assert.Nil(t, cfg)
 	})
@@ -214,7 +576,7 @@ func TestGetConfig_Additional(t *testing.T) {
 				IngressClassName: ptr.To("nginx-class"),
 			},
 		}
-		cfg, err := GetConfig(ing, "", "", mapping)
+		cfg, err := GetConfig(ing, "", "", mapping, nil)
 		assert.Error(t, err)
 		assert.Nil(t, cfg)
 	})
@@ -231,7 +593,7 @@ func TestGetConfig_Additional(t *testing.T) {
 				IngressClassName: ptr.To("nginx-class"),
 			},
 		}
-		cfg, err := GetConfig(ing, "", "", badMapping)
+		cfg, err := GetConfig(ing, "", "", badMapping, nil)
 		assert.Error(t, err)
 		assert.Nil(t, cfg)
 	})
@@ -250,7 +612,7 @@ func TestGetConfig_Additional(t *testing.T) {
 				IngressClassName: ptr.To("nginx-class"),
 			},
 		}
-		cfg, err := GetConfig(ing, "nginx", "default-emitter", mapping)
+		cfg, err := GetConfig(ing, "nginx", "default-emitter", mapping, nil)
 		assert.NoError(t, err)
 		assert.Equal(t, "custom-gw-ns", cfg.GatewayNamespace)
 		assert.Equal(t, "custom-emitter", cfg.Emitter)
@@ -267,10 +629,48 @@ func TestGetConfig_Additional(t *testing.T) {
 				IngressClassName: ptr.To("nginx-class"),
 			},
 		}
-		cfg, err := GetConfig(ing, "nginx", "my-default-emitter", mapping)
+		cfg, err := GetConfig(ing, "nginx", "my-default-emitter", mapping, nil)
 		assert.NoError(t, err)
 		assert.Equal(t, "my-default-emitter", cfg.Emitter)
 	})
+}
+
+func TestExternalGatewayParsingAndValidation(t *testing.T) {
+	t.Run("valid external gateway flag parsing", func(t *testing.T) {
+		cls, eg, err := ParseExternalGatewayMapping("external-nginx=gateway-infra/my-gw")
+		require.NoError(t, err)
+		assert.Equal(t, "external-nginx", cls)
+		assert.Equal(t, "gateway-infra", eg.Namespace)
+		assert.Equal(t, "my-gw", eg.Name)
+	})
+
+	t.Run("invalid external gateway flag parsing", func(t *testing.T) {
+		_, _, err := ParseExternalGatewayMapping("")
+		assert.Error(t, err)
+
+		_, _, err = ParseExternalGatewayMapping("invalid-format")
+		assert.Error(t, err)
+
+		_, _, err = ParseExternalGatewayMapping("=gateway-infra/my-gw")
+		assert.Error(t, err)
+
+		_, _, err = ParseExternalGatewayMapping("class=/name")
+		assert.Error(t, err)
+
+		_, _, err = ParseExternalGatewayMapping("class=ns/")
+		assert.Error(t, err)
+
+		_, _, err = ParseExternalGatewayMapping("class=ns/name/extra")
+		assert.Error(t, err)
+	})
+}
+
+func TestValidateIngressSelectionMode(t *testing.T) {
+	assert.NoError(t, ValidateIngressSelectionMode("annotation"))
+	assert.NoError(t, ValidateIngressSelectionMode("ingressclass"))
+	assert.Error(t, ValidateIngressSelectionMode("all"))
+	assert.Error(t, ValidateIngressSelectionMode(""))
+	assert.Error(t, ValidateIngressSelectionMode("unknown"))
 }
 
 func TestAddSourceAnnotations(t *testing.T) {
