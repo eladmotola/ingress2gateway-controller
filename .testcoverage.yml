@@ -8,4 +8,5 @@ threshold:
 exclude:
   paths:
     - ^cmd/
+    - ^test/e2e
     - _test\.go$

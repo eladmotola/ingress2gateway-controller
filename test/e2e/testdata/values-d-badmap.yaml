@@ -1,0 +1,14 @@
+# Group D: malformed external Gateway mapping — controller must fail startup.
+image:
+  registry: i2g-e2e-local
+  repository: ingress2gateway-controller
+  tag: e2e
+  pullPolicy: Never
+
+controller:
+  leaderElection: false
+  defaultProvider: ingress-nginx
+  defaultEmitter: standard
+  ingressSelectionMode: ingressclass
+  ingressClassToExternalGatewayMapping:
+    ext-class: badformat

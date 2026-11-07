@@ -32,3 +32,6 @@ kubeconfig
 # Build
 bin/
 dist/
+
+# E2E
+e2e-artifacts/
