@@ -1,0 +1,16 @@
+# Group A: annotation mode.
+# Image registry/repository/tag/pullPolicy are also --set by the test harness
+# so they match the locally built kind-loaded image.
+image:
+  registry: i2g-e2e-local
+  repository: ingress2gateway-controller
+  tag: e2e
+  pullPolicy: Never
+
+controller:
+  leaderElection: false
+  defaultProvider: ingress-nginx
+  defaultEmitter: standard
+  ingressSelectionMode: annotation
+  ingressClassToGatewayClassMapping:
+    nginx-test: test-gc

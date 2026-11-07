@@ -1,0 +1,16 @@
+# Group C: ingressclass mode + external Gateway mapping.
+image:
+  registry: i2g-e2e-local
+  repository: ingress2gateway-controller
+  tag: e2e
+  pullPolicy: Never
+
+controller:
+  leaderElection: false
+  defaultProvider: ingress-nginx
+  defaultEmitter: standard
+  ingressSelectionMode: ingressclass
+  ingressClassToGatewayClassMapping:
+    nginx-test: test-gc
+  ingressClassToExternalGatewayMapping:
+    ext-class: ext-ns/shared-gw
